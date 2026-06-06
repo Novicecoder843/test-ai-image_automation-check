@@ -1,0 +1,45 @@
+version: "3.9"
+
+# Brings up PostgreSQL (with pgvector) + Redis ready for the POC.
+# Usage:
+#   docker compose up -d
+#   npm run migrate
+#   npm run dev
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: cleaning_poc_pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cleaning
+      POSTGRES_PASSWORD: cleaning
+      POSTGRES_DB: cleaning_poc
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cleaning -d cleaning_poc"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: cleaning_poc_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:
+  redisdata:
