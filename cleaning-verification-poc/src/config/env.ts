@@ -95,6 +95,30 @@ const schema = z.object({
     .transform((v) => v.toLowerCase() === 'true'),
   // Max upload size (multer). Bigger than decoded pixel limit because HEIC is compact.
   IMG_MAX_UPLOAD_MB: z.coerce.number().int().positive().max(50).default(15),
+
+  // ─── Image quality gate ───
+  // Runs after preprocessing, BEFORE storage + embedding, for BOTH admin and
+  // janitor uploads. Rejects blurry / dark / tiny photos with HTTP 422 so the
+  // user re-shoots instead of producing a misleading FAIL later.
+  //   - enforce: true  → hard-reject low-quality images (422)
+  //   - enforce: false → measure + log only (warn), never reject
+  IMG_QUALITY_ENFORCE: z
+    .string()
+    .default('true')
+    .transform((v) => v.toLowerCase() === 'true'),
+  // Reject when the longest side (px) is below this.
+  IMG_QUALITY_MIN_DIMENSION: z.coerce.number().int().positive().default(480),
+  // Reject when total resolution (megapixels) is below this.
+  IMG_QUALITY_MIN_MEGAPIXELS: z.coerce.number().positive().default(0.3),
+  // Reject when sharp's `sharpness` metric is below this (blur detection).
+  IMG_QUALITY_MIN_SHARPNESS: z.coerce.number().min(0).default(2),
+  // Reject when mean luma (0..255) is outside [min, max] (too dark / overexposed).
+  IMG_QUALITY_MIN_BRIGHTNESS: z.coerce.number().min(0).max(255).default(25),
+  IMG_QUALITY_MAX_BRIGHTNESS: z.coerce.number().min(0).max(255).default(235),
+  // Reject when Shannon entropy is below this (near-blank / no detail).
+  IMG_QUALITY_MIN_ENTROPY: z.coerce.number().min(0).default(2.5),
+  // Reject when the re-encoded file is suspiciously tiny (bytes).
+  IMG_QUALITY_MIN_BYTES: z.coerce.number().int().positive().default(15_000),
 });
 
 const parsed = schema.safeParse(raw);

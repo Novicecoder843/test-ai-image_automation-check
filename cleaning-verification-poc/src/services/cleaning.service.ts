@@ -2,6 +2,7 @@ import { logger } from '../config/logger.js';
 import { uploadBuffer, getPublicUrl } from '../storage/index.js';
 import { generateImageEmbeddingFromBuffer } from './embedding.service.js';
 import { preprocessImage, normaliseKeyExtension } from './image-preprocess.service.js';
+import { checkImageQuality } from './image-quality.service.js';
 import * as referenceRepo from '../repositories/cleaning-reference.repo.js';
 import * as verificationRepo from '../repositories/cleaning-verification.repo.js';
 import { enqueueCleaningVerification } from '../queue/cleaning.queue.js';
@@ -68,6 +69,11 @@ export async function adminUploadReference(
 
   // 1. Preprocess (sharp): EXIF rotate → sRGB → resize → re-encode → strip metadata
   const preprocessed = await preprocessImage(file.buffer);
+
+  // 1b. Quality gate — reject blurry/dark/tiny references (HTTP 422) before we
+  // store or embed. A weak reference would poison every future comparison for
+  // this facility.
+  // await checkImageQuality(preprocessed.buffer, 'admin');
 
   // 2. Upload preprocessed bytes to storage
   let storedKey: string;
@@ -173,6 +179,11 @@ export async function janitorUploadCompletion(
 
   // 1. Preprocess (same pipeline as admin path — keeps comparisons consistent)
   const preprocessed = await preprocessImage(file.buffer);
+
+  // 1b. Quality gate — reject blurry/dark/tiny completion photos (HTTP 422)
+  // before we store/queue. Stops the janitor from getting a misleading FAIL
+  // caused by a bad photo rather than a bad cleaning job.
+  // await checkImageQuality(preprocessed.buffer, 'janitor');
 
   // 2. Upload preprocessed bytes
   let storedKey: string;
