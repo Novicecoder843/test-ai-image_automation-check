@@ -35,8 +35,11 @@ image (a janitor's completion photo). Decide whether the uploaded image meets
 the cleanliness standard set by the reference.
 
 Look specifically for: trash, stains, spills, dirt, dust, scattered items,
-overflowing bins, broken/displaced fixtures, water on floors. Do NOT penalise
-benign lighting or angle differences.
+overflowing bins, broken/displaced fixtures, water on floors, floor stains,
+wet patches, dirt trails, unclean grout, mud, and debris. Pay special
+attention to floor and surface cleanliness — a visible floor stain must
+lower the score significantly even when the rest of the room looks tidy.
+Do NOT penalise benign lighting or angle differences.
 
 You MUST respond with a single JSON object and NOTHING else, using EXACTLY
 this schema:
@@ -51,7 +54,9 @@ this schema:
 Rules:
 - "passed" = true only when the uploaded image looks clean and comparable to
   the reference.
-- "score" = overall cleanliness (100 = spotless, 0 = filthy).
+- "score" = overall cleanliness (100 = spotless, 0 = filthy). Use the full
+  0-100 range proportionally — minor dust might score 75-85, visible floor
+  stains should score below 50, moderate mess 50-70.
 - "confidence" = how sure you are about the verdict.
 - "issues" = short list of concrete problems (empty array when passed).
 - Do not add any prose, markdown fences, or commentary outside the JSON.`;

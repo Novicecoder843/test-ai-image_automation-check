@@ -148,6 +148,7 @@ All routes are under `/api`.
 | ------ | ------------------------------------- | ----------------------------------------------- |
 | POST   | `/admin/upload-reference`             | Save reference image + CLIP embedding           |
 | POST   | `/janitor/upload-completion`          | Save completion image + queue AI verification   |
+| GET    | `/upload-requirements`                | Minimum phone photo + AI threshold spec         |
 | GET    | `/tasks/:taskId/result`               | Latest verification result (with `?includeHistory=true` for full history) |
 | GET    | `/health`                             | DB ping                                         |
 | GET    | `/queue-stats`                        | BullMQ counts                                   |
@@ -192,12 +193,23 @@ curl -X POST http://localhost:4000/api/admin/upload-reference \
     "label": "male-washroom-after-cleaning",
     "embedding_dim": 512,
     "preprocess_ms": 41,
-    "source_bytes": 3287654
+    "source_bytes": 3287654,
+    "quality": { "width": 1024, "height": 768, "sharpness": 4.2, "brightness": 128.5, "entropy": 6.1, "bytes": 142318 }
   }
 }
 ```
 
-### 3.2 `POST /api/janitor/upload-completion`
+Low-quality photos are rejected with **422** (`LOW_QUALITY_IMAGE`). Wrong-area photos at janitor upload are rejected with **422** (`INVALID_TASK_IMAGE`).
+
+### 3.2 `GET /api/upload-requirements`
+
+Returns minimum phone photo specs, quality gate thresholds, scene-match settings, and AI decision thresholds for mobile clients.
+
+```bash
+curl http://localhost:4000/api/upload-requirements
+```
+
+### 3.3 `POST /api/janitor/upload-completion`
 
 `multipart/form-data`:
 
@@ -206,7 +218,7 @@ curl -X POST http://localhost:4000/api/admin/upload-reference \
 | `image`       | file    | yes      | jpg / jpeg / png / webp / heic / heif (≤ 15 MB) |
 | `task_id`     | integer | yes      |                                                 |
 | `facility_id` | integer | yes      |                                                 |
-| `template_id` | integer | no       |                                                 |
+| `template_id` | integer | **yes** (when `SCENE_MATCH_ENFORCE=true`) | Must match admin reference task type |
 | `janitor_id`  | string  | no       |                                                 |
 
 **cURL**
@@ -259,6 +271,9 @@ curl -X POST http://localhost:4000/api/janitor/upload-completion \
     "status": "PASS",
     "image_url": "http://localhost:4000/files/cleaning/completions/...",
     "similarity_score": 0.9132,
+    "scene_match_percent": 91.3,
+    "cleanliness_percent": 91,
+    "overall_percent": 91.1,
     "vision": {
       "passed": true,
       "score": 91,
@@ -274,7 +289,39 @@ curl -X POST http://localhost:4000/api/janitor/upload-completion \
 }
 ```
 
-**FAIL**
+**INVALID_TASK** (wrong area — e.g. kitchen photo for corridor task)
+
+```json
+{
+  "success": true,
+  "results": {
+    "status": "INVALID_TASK",
+    "scene_match_percent": 62.1,
+    "similarity_score": 0.6210,
+    "rule_reason": "scene match 62.1% < required 88% — wrong task area",
+    "error_message": "Please upload a valid task image for this template"
+  }
+}
+```
+
+**FAIL** (same area, not clean — e.g. floor stain)
+
+```json
+{
+  "success": true,
+  "results": {
+    "status": "FAIL",
+    "scene_match_percent": 91.2,
+    "cleanliness_percent": 42,
+    "overall_percent": 56.8,
+    "similarity_score": 0.9120,
+    "vision": { "passed": false, "score": 42, "confidence": 88, "issues": ["floor stain near toilet"] },
+    "rule_reason": "cleanliness 42% < fail_threshold 50%; scene match 91.2% confirms correct area"
+  }
+}
+```
+
+**FAIL** (low similarity legacy path when scene enforce off)
 
 ```json
 {
@@ -359,6 +406,15 @@ npm run infra:up && npm run migrate && npm run dev &
 | `IMG_DECODE_PIXEL_LIMIT`              | `50000000`                         | decompression-bomb guard             |
 | `IMG_ALLOW_HEIC`                      | `true`                             | accept iPhone HEIC/HEIF uploads      |
 | `IMG_MAX_UPLOAD_MB`                   | `15`                               | multer fileSize cap (MB)             |
+| `IMG_QUALITY_ENFORCE`                 | `true`                             | reject blurry/dark photos (422)      |
+| `IMG_QUALITY_MIN_DIMENSION`           | `480`                              | min longest side (px) after preprocess |
+| `IMG_QUALITY_MIN_SHARPNESS`           | `2`                                | blur detection threshold             |
+| `SCENE_MATCH_ENFORCE`                 | `true`                             | reject wrong-area task photos        |
+| `SCENE_MATCH_MIN_SIMILARITY`          | `0.88`                             | min cosine for same-area match       |
+| `SCENE_MATCH_STRICT_TEMPLATE`         | `true`                             | exact template_id reference lookup   |
+| `CLEANING_VISION_PASS_SCORE`          | `80`                               | cleanliness % for PASS               |
+| `CLEANING_VISION_FAIL_SCORE`          | `50`                               | cleanliness % for FAIL               |
+| `CLEANING_VISION_REVIEW_SCORE`        | `65`                               | cleanliness % review band            |
 
 > All env values are sanitized — stray surrounding quotes and inline `# comments`
 > are stripped automatically. Don't intentionally rely on that; keep `.env` clean.

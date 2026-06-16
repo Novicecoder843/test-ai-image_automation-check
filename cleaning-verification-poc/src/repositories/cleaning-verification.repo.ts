@@ -10,7 +10,8 @@ export type CleaningVerificationStatus =
   | 'PASS'
   | 'FAIL'
   | 'MANUAL_REVIEW'
-  | 'ERROR';
+  | 'ERROR'
+  | 'INVALID_TASK';
 
 export interface CleaningVerificationRow {
   id: number;
@@ -27,6 +28,9 @@ export interface CleaningVerificationRow {
   image_bytes: number | null;
   embedding: number[] | null;
   similarity_score: number | null;
+  scene_match_percent: number | null;
+  cleanliness_percent: number | null;
+  overall_percent: number | null;
   vision_passed: boolean | null;
   vision_score: number | null;
   vision_confidence: number | null;
@@ -50,6 +54,12 @@ function hydrate(row: Record<string, unknown>): CleaningVerificationRow {
     embedding: r.embedding ? parsePgVectorLiteral(r.embedding) : null,
     similarity_score:
       r['similarity_score'] != null ? Number(r['similarity_score'] as number) : null,
+    scene_match_percent:
+      r['scene_match_percent'] != null ? Number(r['scene_match_percent'] as number) : null,
+    cleanliness_percent:
+      r['cleanliness_percent'] != null ? Number(r['cleanliness_percent'] as number) : null,
+    overall_percent:
+      r['overall_percent'] != null ? Number(r['overall_percent'] as number) : null,
     vision_score: r['vision_score'] != null ? Number(r['vision_score'] as number) : null,
     vision_confidence:
       r['vision_confidence'] != null ? Number(r['vision_confidence'] as number) : null,
@@ -108,6 +118,9 @@ export interface SaveResultParams {
   reference_id?: number | null;
   embedding?: number[] | null;
   similarity_score?: number | null;
+  scene_match_percent?: number | null;
+  cleanliness_percent?: number | null;
+  overall_percent?: number | null;
   vision_passed?: boolean | null;
   vision_score?: number | null;
   vision_confidence?: number | null;
@@ -124,19 +137,22 @@ export async function saveResult(
 ): Promise<CleaningVerificationRow> {
   const sql = `
     UPDATE ${TABLE} SET
-      reference_id      = COALESCE($2, reference_id),
-      embedding         = COALESCE($3::vector, embedding),
-      similarity_score  = $4,
-      vision_passed     = $5,
-      vision_score      = $6,
-      vision_confidence = $7,
-      vision_issues     = $8::jsonb,
-      vision_raw        = $9::jsonb,
-      status            = $10,
-      rule_reason       = $11,
-      error_message     = $12,
-      processed_at      = CURRENT_TIMESTAMP,
-      updated_at        = CURRENT_TIMESTAMP
+      reference_id          = COALESCE($2, reference_id),
+      embedding             = COALESCE($3::vector, embedding),
+      similarity_score      = $4,
+      scene_match_percent   = $5,
+      cleanliness_percent   = $6,
+      overall_percent       = $7,
+      vision_passed         = $8,
+      vision_score          = $9,
+      vision_confidence     = $10,
+      vision_issues         = $11::jsonb,
+      vision_raw            = $12::jsonb,
+      status                = $13,
+      rule_reason           = $14,
+      error_message         = $15,
+      processed_at          = CURRENT_TIMESTAMP,
+      updated_at            = CURRENT_TIMESTAMP
     WHERE id = $1
     RETURNING *, embedding::text AS embedding`;
   const values = [
@@ -144,6 +160,9 @@ export async function saveResult(
     params.reference_id ?? null,
     params.embedding ? toPgVectorLiteral(params.embedding) : null,
     params.similarity_score ?? null,
+    params.scene_match_percent ?? null,
+    params.cleanliness_percent ?? null,
+    params.overall_percent ?? null,
     params.vision_passed ?? null,
     params.vision_score ?? null,
     params.vision_confidence ?? null,

@@ -409,24 +409,15 @@ the AI.** The janitor gets punished for a camera problem, not a cleaning
 problem. The same applies on the admin side — a poor reference image poisons
 *every* future comparison for that facility.
 
-### Current behavior (as implemented today)
+### Implemented behavior
 
-> The current code does **not** have a quality gate. The only input guards are
-> Multer's MIME whitelist and the 15 MB size cap, plus sharp's decompression
-> guard. A blurry/dark/low-res-but-small image will be accepted, embedded, and
-> compared — and will tend to produce a misleading `FAIL`/`MANUAL_REVIEW`.
+The quality gate is **implemented** in `src/services/image-quality.service.ts` and
+enforced on **both** admin and janitor uploads (after preprocessing, before
+storage). Rejection returns HTTP **422** with code `LOW_QUALITY_IMAGE`.
 
-This section is therefore a **proposed design** (recommended enhancement), not a
-description of existing behavior.
+Mobile clients can fetch live thresholds via `GET /api/upload-requirements`.
 
-### Proposed solution — a shared Quality Gate, run at upload time
-
-Add one **quality gate** that runs **synchronously at upload, for both admin and
-janitor**, *before* storage and embedding. If the image fails the gate, reject
-it immediately with a clear, actionable error so the user re-shoots — instead of
-silently producing a wrong verdict minutes later.
-
-**Where it fits:**
+### Quality Gate flow
 
 ```
 preprocessImage (sharp normalize)
@@ -882,7 +873,7 @@ The verification-relevant knobs:
 | Admin uploads weak reference | accepted → poisons all future comparisons | Quality Gate rejects on admin path too |
 | No active reference for facility | worker → `ERROR` | block janitor upload (or clearer message) until a reference exists |
 | Vision API down / no key | fallback → `MANUAL_REVIEW` with `vision_error:` issue | acceptable; alert on rate of vision errors |
-| Wrong room photographed | high vision pass but low similarity → `MANUAL_REVIEW` | optional "right room?" similarity sanity check |
+| Wrong room photographed | **422** at upload or **INVALID_TASK** in worker | scene match at 0.88 |
 | Unsupported MIME / > 15 MB | Multer rejects (`400`/`413`) | as-is |
 | Decompression bomb | sharp `limitInputPixels` rejects | as-is |
 | Duplicate submissions for a task | each is a new row; latest wins | as-is (full history via `?includeHistory=true`) |
@@ -893,7 +884,8 @@ The verification-relevant knobs:
 
 The structure is production-shaped; before shipping, add:
 
-- **Image Quality Gate** (§10) — the highest-value correctness fix.
+- **Image Quality Gate** (§10) — implemented.
+- **Scene match + percentage scoring** (§21–22) — implemented.
 - **Auth** on upload endpoints (currently open) + **rate limiting**.
 - **Reference existence check** before accepting janitor uploads.
 - **Threshold calibration** on real data; consider per-facility/template
@@ -903,4 +895,46 @@ The structure is production-shaped; before shipping, add:
 - **Signed URLs** for GCS (so the Vision provider can fetch without making the
   bucket public).
 - **Dockerfile + CI**, and a dead-letter strategy for repeatedly failing jobs.
-```
+
+---
+
+## 21. Scene / task matching (implemented)
+
+Wrong-area photos (corridor task + kitchen image) are rejected via
+`src/services/scene-match.service.ts`:
+
+1. **Sync at janitor upload** — CLIP embed + compare to template-scoped references;
+   if best cosine < `SCENE_MATCH_MIN_SIMILARITY` (0.88) → HTTP **422**
+   `INVALID_TASK_IMAGE` before storage.
+2. **Worker double-check** — same logic; if fail → status **`INVALID_TASK`**, vision
+   skipped.
+
+`template_id` is **required** on janitor upload when `SCENE_MATCH_ENFORCE=true`.
+References are loaded with **exact** `template_id` match when
+`SCENE_MATCH_STRICT_TEMPLATE=true` (no NULL fallback).
+
+---
+
+## 22. Percentage-based scoring (implemented)
+
+Rule engine v2 (`src/services/rule-engine.service.ts`) computes:
+
+| Field | Formula |
+|-------|---------|
+| `scene_match_percent` | `similarity × 100` |
+| `cleanliness_percent` | vision LLM score (0–100) |
+| `overall_percent` | `0.30 × scene + 0.70 × cleanliness` |
+
+**Decision matrix** (after scene match passes):
+
+| Condition | Status |
+|-----------|--------|
+| similarity ≥ 0.85 AND cleanliness ≥ 80 AND vision.passed | **PASS** |
+| cleanliness < 50 OR (cleanliness < 65 + stain-type issues) | **FAIL** |
+| gray zone | **MANUAL_REVIEW** |
+| scene match < 0.88 | **INVALID_TASK** / 422 |
+
+Persisted in `cleaning_verifications.scene_match_percent`, `cleanliness_percent`,
+`overall_percent` (migration `002_scene_match_scoring.sql`).
+
+Run `npm run migrate` after pulling these changes.

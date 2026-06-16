@@ -4,6 +4,7 @@ import {
   adminUploadReference,
   janitorUploadCompletion,
   getTaskResult,
+  getUploadRequirements,
 } from '../controllers/cleaning.controller.js';
 import { getCleaningQueueStats } from '../queue/cleaning.queue.js';
 import { pool } from '../db/pool.js';
@@ -13,6 +14,7 @@ import { pool } from '../db/pool.js';
  *
  *   POST /api/admin/upload-reference         (multipart, field: image)
  *   POST /api/janitor/upload-completion      (multipart, field: image)
+ *   GET  /api/upload-requirements          (minimum phone photo + AI config)
  *   GET  /api/tasks/:taskId/result           [?includeHistory=true|false]
  *
  * Plus operational endpoints:
@@ -34,6 +36,8 @@ router.post(
 );
 
 router.get('/tasks/:taskId/result', getTaskResult);
+
+router.get('/upload-requirements', getUploadRequirements);
 
 router.get('/queue-stats', async (_req, res, next) => {
   try {

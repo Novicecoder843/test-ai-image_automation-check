@@ -45,6 +45,7 @@ export function buildApp(): Express {
       docs: {
         admin_upload_reference: 'POST /api/admin/upload-reference',
         janitor_upload_completion: 'POST /api/janitor/upload-completion',
+        upload_requirements: 'GET /api/upload-requirements',
         task_result: 'GET /api/tasks/:taskId/result',
         health: 'GET /api/health',
         queue_stats: 'GET /api/queue-stats',

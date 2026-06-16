@@ -10,7 +10,7 @@ import { logger } from '../config/logger.js';
 import * as referenceRepo from '../repositories/cleaning-reference.repo.js';
 import * as verificationRepo from '../repositories/cleaning-verification.repo.js';
 import { generateImageEmbeddingFromUrl } from '../services/embedding.service.js';
-import { findBestMatch } from '../services/similarity.service.js';
+import { assessSceneMatch } from '../services/scene-match.service.js';
 import { analyzeCleanliness, type VisionResult } from '../services/vision.service.js';
 import { evaluateRules } from '../services/rule-engine.service.js';
 
@@ -20,10 +20,11 @@ import { evaluateRules } from '../services/rule-engine.service.js';
  * Flow per job:
  *   1. mark PROCESSING
  *   2. generate CLIP embedding of the uploaded image
- *   3. fetch active references and pick the best match
- *   4. run GPT-4o Vision (with graceful fallback to MANUAL_REVIEW)
- *   5. evaluate rules → PASS / FAIL / MANUAL_REVIEW
- *   6. persist result
+ *   3. fetch template-scoped references and pick the best match
+ *   4. scene double-check → INVALID_TASK if wrong area (skip vision)
+ *   5. run Vision LLM (with graceful fallback to MANUAL_REVIEW)
+ *   6. evaluate rules v2 → PASS / FAIL / MANUAL_REVIEW + percentages
+ *   7. persist result
  */
 
 let instance: Worker<CleaningJobData> | null = null;
@@ -37,36 +38,74 @@ export async function processCleaningJob(job: Job<CleaningJobData>): Promise<unk
   try {
     await verificationRepo.markProcessing(verification_id);
 
-    // 1) Embed uploaded image
     const uploadedEmbedding = await generateImageEmbeddingFromUrl(uploaded_image_url);
     logger.info(
       { verificationId: verification_id, dim: uploadedEmbedding.length },
       'job: embedded uploaded image'
     );
 
-    // 2) Reference lookup + similarity
-    const references = await referenceRepo.getActiveReferencesByFacility(
+    const references = await referenceRepo.getReferencesForSceneMatch(
       facility_id,
       template_id ?? null
     );
     if (!references.length) {
-      throw new Error(`No active reference image for facility ${facility_id}`);
+      throw new Error(`No active reference image for facility ${facility_id} template ${template_id}`);
     }
-    const best = findBestMatch(uploadedEmbedding, references);
-    if (!best) throw new Error('Could not compute similarity against references');
-    const similarity = Math.max(-1, Math.min(1, best.score));
-    const reference = best.match;
+
+    const sceneResult = assessSceneMatch(uploadedEmbedding, references);
+    if (!sceneResult) {
+      throw new Error('Could not compute similarity against references');
+    }
+
+    const similarity = sceneResult.similarity;
+    const reference = sceneResult.reference;
+
     logger.info(
       {
         verificationId: verification_id,
         referenceId: reference.id,
         similarity,
+        sceneOk: sceneResult.ok,
         candidates: references.length,
       },
       'job: best reference selected'
     );
 
-    // 3) GPT-4o Vision (fallback on failure)
+    // Scene double-check — skip expensive vision on wrong-area photos
+    if (!sceneResult.ok) {
+      const rule = evaluateRules({
+        similarity,
+        vision: { passed: false, score: 0, confidence: 0, issues: ['wrong_task_area'] },
+        sceneMatchOk: false,
+      });
+
+      const saved = await verificationRepo.saveResult(verification_id, {
+        reference_id: reference.id,
+        embedding: uploadedEmbedding,
+        similarity_score: Number(similarity.toFixed(4)),
+        scene_match_percent: rule.scene_match_percent,
+        cleanliness_percent: rule.cleanliness_percent,
+        overall_percent: rule.overall_percent,
+        status: 'INVALID_TASK',
+        rule_reason: rule.reason,
+        error_message: 'Please upload a valid task image for this template',
+      });
+
+      logger.warn(
+        { verificationId: verification_id, similarity, status: saved.status },
+        'job: INVALID_TASK — wrong area'
+      );
+
+      return {
+        verification_id,
+        task_id,
+        status: saved.status,
+        similarity,
+        scene_match_percent: rule.scene_match_percent,
+        durationMs: Date.now() - startedAt,
+      };
+    }
+
     let vision: VisionResult;
     try {
       vision = await analyzeCleanliness(reference.image_url ?? uploaded_image_url, uploaded_image_url);
@@ -84,16 +123,17 @@ export async function processCleaningJob(job: Job<CleaningJobData>): Promise<unk
       };
     }
 
-    // 4) Rule engine
-    const rule = evaluateRules({ similarity, vision });
+    const rule = evaluateRules({ similarity, vision, sceneMatchOk: true });
     let finalStatus = rule.decision;
     if (vision.raw == null && finalStatus === 'PASS') finalStatus = 'MANUAL_REVIEW';
 
-    // 5) Persist
     const saved = await verificationRepo.saveResult(verification_id, {
       reference_id: reference.id,
       embedding: uploadedEmbedding,
       similarity_score: Number(similarity.toFixed(4)),
+      scene_match_percent: rule.scene_match_percent,
+      cleanliness_percent: rule.cleanliness_percent,
+      overall_percent: rule.overall_percent,
       vision_passed: vision.passed,
       vision_score: vision.score,
       vision_confidence: vision.confidence,
@@ -110,6 +150,9 @@ export async function processCleaningJob(job: Job<CleaningJobData>): Promise<unk
         verificationId: verification_id,
         status: saved.status,
         similarity,
+        scene_match_percent: rule.scene_match_percent,
+        cleanliness_percent: rule.cleanliness_percent,
+        overall_percent: rule.overall_percent,
         visionScore: vision.score,
         durationMs,
       },
@@ -121,6 +164,9 @@ export async function processCleaningJob(job: Job<CleaningJobData>): Promise<unk
       task_id,
       status: saved.status,
       similarity,
+      scene_match_percent: rule.scene_match_percent,
+      cleanliness_percent: rule.cleanliness_percent,
+      overall_percent: rule.overall_percent,
       visionScore: vision.score,
       durationMs,
     };

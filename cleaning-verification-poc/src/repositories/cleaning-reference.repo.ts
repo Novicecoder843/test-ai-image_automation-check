@@ -1,4 +1,5 @@
 import { query } from '../db/pool.js';
+import { env } from '../config/env.js';
 import {
   toPgVectorLiteral,
   parsePgVectorLiteral,
@@ -90,6 +91,45 @@ export async function getActiveReferencesByFacility(
     ...row,
     embedding: parsePgVectorLiteral(row.embedding),
   })) as CleaningReferenceRow[];
+}
+
+/**
+ * Active references scoped to an exact template_id (no NULL fallback).
+ * Used when SCENE_MATCH_STRICT_TEMPLATE=true.
+ */
+export async function getActiveReferencesByTemplate(
+  facility_id: number,
+  template_id: number
+): Promise<CleaningReferenceRow[]> {
+  const sql = `
+    SELECT id, facility_id, template_id, label, image_path, image_url,
+           image_mime, image_width, image_height, image_bytes,
+           embedding::text AS embedding, uploaded_by, is_active,
+           created_at, updated_at
+    FROM ${TABLE}
+    WHERE facility_id = $1 AND template_id = $2 AND is_active = TRUE
+    ORDER BY created_at DESC`;
+  const result = await query<CleaningReferenceRow & { embedding: string }>(sql, [
+    facility_id,
+    template_id,
+  ]);
+  return result.rows.map((row) => ({
+    ...row,
+    embedding: parsePgVectorLiteral(row.embedding),
+  })) as CleaningReferenceRow[];
+}
+
+/**
+ * Load references for scene matching — strict or legacy (includes NULL template).
+ */
+export async function getReferencesForSceneMatch(
+  facility_id: number,
+  template_id: number | null
+): Promise<CleaningReferenceRow[]> {
+  if (template_id != null && env.SCENE_MATCH_STRICT_TEMPLATE) {
+    return getActiveReferencesByTemplate(facility_id, template_id);
+  }
+  return getActiveReferencesByFacility(facility_id, template_id);
 }
 
 /**

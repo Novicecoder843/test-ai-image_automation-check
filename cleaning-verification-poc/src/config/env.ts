@@ -66,9 +66,27 @@ const schema = z.object({
   OPENAI_API_URL: z.string().default('https://api.openai.com/v1/chat/completions'),
   OPENAI_TIMEOUT_MS: z.coerce.number().int().positive().default(45000),
 
-  // Rule engine
+  // Rule engine — cosine similarity (0..1)
   CLEANING_SIMILARITY_PASS_THRESHOLD: z.coerce.number().min(-1).max(1).default(0.85),
   CLEANING_SIMILARITY_FAIL_THRESHOLD: z.coerce.number().min(-1).max(1).default(0.65),
+  // Vision cleanliness score thresholds (0..100)
+  CLEANING_VISION_PASS_SCORE: z.coerce.number().int().min(0).max(100).default(80),
+  CLEANING_VISION_FAIL_SCORE: z.coerce.number().int().min(0).max(100).default(50),
+  CLEANING_VISION_REVIEW_SCORE: z.coerce.number().int().min(0).max(100).default(65),
+  // Overall score weights: overall = SCENE_WEIGHT * scene% + CLEANLINESS_WEIGHT * cleanliness%
+  CLEANING_SCENE_WEIGHT: z.coerce.number().min(0).max(1).default(0.3),
+  CLEANING_CLEANLINESS_WEIGHT: z.coerce.number().min(0).max(1).default(0.7),
+
+  // Scene / task matching — reject wrong-area photos (corridor vs kitchen)
+  SCENE_MATCH_ENFORCE: z
+    .string()
+    .default('true')
+    .transform((v) => v.toLowerCase() === 'true'),
+  SCENE_MATCH_MIN_SIMILARITY: z.coerce.number().min(-1).max(1).default(0.88),
+  SCENE_MATCH_STRICT_TEMPLATE: z
+    .string()
+    .default('true')
+    .transform((v) => v.toLowerCase() === 'true'),
 
   // Worker
   RUN_WORKER_IN_API: z
@@ -111,7 +129,7 @@ const schema = z.object({
   // Reject when total resolution (megapixels) is below this.
   IMG_QUALITY_MIN_MEGAPIXELS: z.coerce.number().positive().default(0.3),
   // Reject when sharp's `sharpness` metric is below this (blur detection).
-  IMG_QUALITY_MIN_SHARPNESS: z.coerce.number().min(0).default(2),
+  IMG_QUALITY_MIN_SHARPNESS: z.coerce.number().min(0).default(1),
   // Reject when mean luma (0..255) is outside [min, max] (too dark / overexposed).
   IMG_QUALITY_MIN_BRIGHTNESS: z.coerce.number().min(0).max(255).default(25),
   IMG_QUALITY_MAX_BRIGHTNESS: z.coerce.number().min(0).max(255).default(235),

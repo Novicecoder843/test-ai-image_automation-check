@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { AppError } from '../middlewares/error-handler.js';
 import * as cleaningService from '../services/cleaning.service.js';
@@ -17,7 +18,9 @@ const adminUploadBody = z.object({
 const janitorUploadBody = z.object({
   task_id: z.coerce.number().int().positive(),
   facility_id: z.coerce.number().int().positive(),
-  template_id: z.coerce.number().int().positive().optional(),
+  template_id: env.SCENE_MATCH_ENFORCE
+    ? z.coerce.number().int().positive()
+    : z.coerce.number().int().positive().optional(),
   janitor_id: z.string().max(100).optional(),
 });
 
@@ -123,4 +126,11 @@ export async function getTaskResult(req: Request, res: Response, next: NextFunct
   } catch (err) {
     next(err);
   }
+}
+
+/**
+ * GET /upload-requirements
+ */
+export function getUploadRequirements(_req: Request, res: Response) {
+  res.json({ success: true, results: cleaningService.fetchUploadRequirements() });
 }

@@ -175,3 +175,58 @@ export async function checkImageQuality(buffer: Buffer, context: string): Promis
   enforceQuality(report, context);
   return report;
 }
+
+/**
+ * Minimum upload requirements for mobile clients (phone photos).
+ * Values mirror env defaults — call at runtime so deployments stay in sync.
+ */
+export function getUploadRequirements() {
+  return {
+    upload: {
+      max_size_mb: env.IMG_MAX_UPLOAD_MB,
+      allowed_mime_types: env.IMG_ALLOW_HEIC
+        ? ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif']
+        : ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'],
+    },
+    preprocess: {
+      max_dimension_px: env.IMG_MAX_DIMENSION,
+      output_format: env.IMG_OUTPUT_FORMAT,
+      output_quality: env.IMG_OUTPUT_QUALITY,
+    },
+    quality_gate: {
+      enforce: env.IMG_QUALITY_ENFORCE,
+      min_dimension_px: env.IMG_QUALITY_MIN_DIMENSION,
+      min_megapixels: env.IMG_QUALITY_MIN_MEGAPIXELS,
+      min_sharpness: env.IMG_QUALITY_MIN_SHARPNESS,
+      min_brightness: env.IMG_QUALITY_MIN_BRIGHTNESS,
+      max_brightness: env.IMG_QUALITY_MAX_BRIGHTNESS,
+      min_entropy: env.IMG_QUALITY_MIN_ENTROPY,
+      min_bytes: env.IMG_QUALITY_MIN_BYTES,
+    },
+    scene_match: {
+      enforce: env.SCENE_MATCH_ENFORCE,
+      min_similarity: env.SCENE_MATCH_MIN_SIMILARITY,
+      strict_template: env.SCENE_MATCH_STRICT_TEMPLATE,
+      template_id_required: env.SCENE_MATCH_ENFORCE,
+    },
+    ai: {
+      clip_model: env.CLIP_MODEL_NAME,
+      vision_provider: env.VISION_PROVIDER,
+      embedding_dimensions: 512,
+    },
+    decision_thresholds: {
+      similarity_pass: env.CLEANING_SIMILARITY_PASS_THRESHOLD,
+      similarity_fail: env.CLEANING_SIMILARITY_FAIL_THRESHOLD,
+      scene_match_min: env.SCENE_MATCH_MIN_SIMILARITY,
+      vision_pass_score: env.CLEANING_VISION_PASS_SCORE,
+      vision_fail_score: env.CLEANING_VISION_FAIL_SCORE,
+      vision_review_score: env.CLEANING_VISION_REVIEW_SCORE,
+    },
+    tips: [
+      'Hold the camera steady and ensure good lighting.',
+      'Frame the same area as the task reference photo.',
+      'Use the highest quality setting on your phone camera.',
+      'template_id must match the task type (e.g. washroom=168, corridor=101).',
+    ],
+  };
+}
