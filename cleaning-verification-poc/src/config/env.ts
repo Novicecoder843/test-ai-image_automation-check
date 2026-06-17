@@ -38,6 +38,16 @@ const schema = z.object({
   REDIS_HOST: z.string().default('localhost'),
   REDIS_PORT: z.coerce.number().int().positive().default(6379),
   REDIS_PASSWORD: z.string().optional(),
+  REDIS_TLS: z
+    .string()
+    .default('false')
+    .transform((v) => v.toLowerCase() === 'true'),
+  REDIS_TLS_REJECT_UNAUTHORIZED: z
+    .string()
+    .default('true')
+    .transform((v) => v.toLowerCase() === 'true'),
+  REDIS_TLS_CA: z.string().optional(),
+  REDIS_TLS_SERVERNAME: z.string().optional(),
 
   // Storage
   STORAGE_DRIVER: z.enum(['local', 'gcs']).default('local'),
