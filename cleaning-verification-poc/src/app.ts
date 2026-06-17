@@ -38,19 +38,11 @@ export function buildApp(): Express {
   // API
   app.use('/api', apiRouter);
 
-  // Root → tiny help text
+  // Simple upload + compare UI (static)
+  const publicDir = path.join(process.cwd(), 'public');
+  app.use(express.static(publicDir, { index: 'index.html', maxAge: '1h' }));
   app.get('/', (_req, res) => {
-    res.json({
-      name: 'cleaning-verification-poc',
-      docs: {
-        admin_upload_reference: 'POST /api/admin/upload-reference',
-        janitor_upload_completion: 'POST /api/janitor/upload-completion',
-        upload_requirements: 'GET /api/upload-requirements',
-        task_result: 'GET /api/tasks/:taskId/result',
-        health: 'GET /api/health',
-        queue_stats: 'GET /api/queue-stats',
-      },
-    });
+    res.sendFile(path.join(publicDir, 'index.html'));
   });
 
   app.use(notFoundHandler);
