@@ -170,3 +170,35 @@ export async function findBestMatchByVector(
     similarity: Number(row.similarity),
   } as CleaningReferenceRow & { similarity: number };
 }
+
+export async function getReferencesList(): Promise<CleaningReferenceRow[]> {
+  const result = await query<CleaningReferenceRow>(
+    `
+    SELECT id, facility_id, template_id, label, image_path, image_url,
+           image_mime, image_width, image_height, image_bytes,
+           uploaded_by, is_active, created_at, updated_at, batch_id
+    FROM ${TABLE}
+    WHERE is_active = TRUE
+    ORDER BY created_at DESC
+    `
+  );
+  return result.rows;
+}
+
+export async function getReferenceById(id: number): Promise<CleaningReferenceRow | null> {
+  const sql = `
+    SELECT id, facility_id, template_id, label, image_path, image_url,
+           image_mime, image_width, image_height, image_bytes,
+           embedding::text AS embedding, uploaded_by, is_active,
+           created_at, updated_at, batch_id
+    FROM ${TABLE}
+    WHERE id = $1
+  `;
+  const result = await query<CleaningReferenceRow & { embedding: string }>(sql, [id]);
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    ...row,
+    embedding: parsePgVectorLiteral(row.embedding),
+  } as CleaningReferenceRow;
+}

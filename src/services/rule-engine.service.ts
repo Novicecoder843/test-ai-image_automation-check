@@ -64,6 +64,16 @@ export function hasCleanlinessDefectIssues(issues: string[]): boolean {
   return DEFECT_KEYWORDS.some((kw) => joined.includes(kw));
 }
 
+function hasVisionUnavailableIssue(issues: string[]): boolean {
+  return issues.some((issue) => {
+    const normalized = issue.toLowerCase();
+    return (
+      normalized.startsWith('vision_error:') ||
+      normalized === 'no_vision_response'
+    );
+  });
+}
+
 function buildThresholds() {
   return {
     similarity_pass: env.CLEANING_SIMILARITY_PASS_THRESHOLD,
@@ -126,7 +136,22 @@ export function evaluateRules(input: RuleInput): ScoringResult {
 
   const issues = vision?.issues ?? [];
   const visionPassed = vision?.passed === true;
-  const score = cleanlinessPercent ?? 0;
+  const score = cleanlinessPercent;
+
+  if (score == null || hasVisionUnavailableIssue(issues)) {
+    return {
+      decision: 'MANUAL_REVIEW',
+      reason: [
+        `scene match ${sceneMatchPercent}%`,
+        'cleanliness unavailable',
+        hasVisionUnavailableIssue(issues) ? 'vision provider unavailable' : 'vision score unavailable',
+      ].join('; '),
+      scene_match_percent: sceneMatchPercent,
+      cleanliness_percent: cleanlinessPercent,
+      overall_percent: overallPercent,
+      thresholds,
+    };
+  }
 
   // FAIL — clearly not clean enough
   if (

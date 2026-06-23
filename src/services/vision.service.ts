@@ -1,5 +1,6 @@
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
+import { GoogleGenAI } from '@google/genai';
 
 /**
  * Vision service — pluggable provider.
@@ -355,6 +356,107 @@ async function analyzeWithOpenAi(
   return result;
 }
 
+// ─── Provider: Google Gemini ──────────────────────────────────────────────
+
+async function analyzeWithGemini(
+  referenceImageUrl: string,
+  uploadedImageUrl: string
+): Promise<VisionResult> {
+  if (!env.GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY is not configured');
+  }
+
+  // Fetch and inline both images as base64 for the Gemini API
+  const [reference, uploaded] = await Promise.all([
+    fetchImageAsBase64(referenceImageUrl, env.ANTHROPIC_TIMEOUT_MS),
+    fetchImageAsBase64(uploadedImageUrl, env.ANTHROPIC_TIMEOUT_MS),
+  ]);
+
+  const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
+  const startedAt = Date.now();
+  
+  let responseText = '';
+  let attempts = 0;
+  const maxAttempts = 5;
+  const baseDelayMs = 2000;
+  
+  // Retry loop for handling temporary rate limits or overloaded servers
+  while (attempts < maxAttempts) {
+    try {
+      const response = await ai.models.generateContent({
+        model: env.GEMINI_VISION_MODEL,
+        contents: [
+          SYSTEM_PROMPT,
+          USER_INSTRUCTION,
+          {
+            inlineData: {
+              mimeType: reference.mediaType,
+              data: reference.base64,
+            }
+          },
+          {
+            inlineData: {
+              mimeType: uploaded.mediaType,
+              data: uploaded.base64,
+            }
+          }
+        ],
+        config: {
+          responseMimeType: 'application/json',
+          temperature: 0,
+        }
+      });
+      
+      responseText = response?.text || '';
+      break; // Successfully generated content, exit the retry loop
+      
+    } catch (error: any) {
+      attempts++;
+      const errorMessage = error?.message?.toLowerCase() || '';
+      const isRateLimited = 
+        errorMessage.includes('503') || 
+        errorMessage.includes('429') || 
+        errorMessage.includes('overloaded') || 
+        errorMessage.includes('too many requests');
+
+      if (!isRateLimited || attempts >= maxAttempts) {
+        throw error;
+      }
+      
+      // Calculate exponential backoff (e.g. 2s, 4s, 8s...) to gracefully handle load
+      const delayMs = baseDelayMs * Math.pow(2, attempts - 1);
+      logger.warn(
+        { attempt: attempts, err: error.message, delayMs }, 
+        'Gemini API is currently overloaded. Retrying shortly...'
+      );
+      
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+
+  // Parse and normalize the JSON response
+  const result: VisionResult = {
+    ...normalize(parseStrictJson(responseText)),
+    provider: 'gemini',
+    model: env.GEMINI_VISION_MODEL,
+  };
+
+  logger.info(
+    {
+      provider: 'gemini',
+      model: env.GEMINI_VISION_MODEL,
+      durationMs: Date.now() - startedAt,
+      passed: result.passed,
+      score: result.score,
+      confidence: result.confidence,
+      issueCount: result.issues.length,
+    },
+    'Vision analysis complete'
+  );
+
+  return result;
+}
+
 // ─── Public entrypoint ──────────────────────────────────────────────────
 
 export async function analyzeCleanliness(
@@ -364,8 +466,12 @@ export async function analyzeCleanliness(
   if (!referenceImageUrl || !uploadedImageUrl) {
     throw new Error('Both referenceImageUrl and uploadedImageUrl are required');
   }
+  if (env.VISION_PROVIDER === 'gemini') {
+    return analyzeWithGemini(referenceImageUrl, uploadedImageUrl);
+  }
   if (env.VISION_PROVIDER === 'openai') {
     return analyzeWithOpenAi(referenceImageUrl, uploadedImageUrl);
   }
   return analyzeWithAnthropic(referenceImageUrl, uploadedImageUrl);
 }
+

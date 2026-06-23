@@ -44,35 +44,54 @@ export async function processCleaningJob(job: Job<CleaningJobData>): Promise<unk
       'job: embedded uploaded image'
     );
 
-    const references = await referenceRepo.getReferencesForSceneMatch(
-      facility_id,
-      template_id ?? null
-    );
-    if (!references.length) {
-      throw new Error(`No active reference image for facility ${facility_id} template ${template_id}`);
+    let similarity = 1.0;
+    let reference = await referenceRepo.getReferenceById(task_id);
+    let sceneOk = true;
+
+    if (reference && reference.facility_id === facility_id) {
+      logger.info(
+        { verificationId: verification_id, referenceId: reference.id },
+        'job: using explicit reference selected by user'
+      );
+      // We can still optionally calculate similarity for the rules
+      const refEmbedding = reference.embedding;
+      let dot = 0;
+      for (let i = 0; i < uploadedEmbedding.length; i++) {
+        dot += uploadedEmbedding[i] * refEmbedding[i];
+      }
+      similarity = dot; // Assuming normalized
+    } else {
+      const references = await referenceRepo.getReferencesForSceneMatch(
+        facility_id,
+        template_id ?? null
+      );
+      if (!references.length) {
+        throw new Error(`No active reference image for facility ${facility_id} template ${template_id}`);
+      }
+
+      const sceneResult = assessSceneMatch(uploadedEmbedding, references);
+      if (!sceneResult) {
+        throw new Error('Could not compute similarity against references');
+      }
+
+      similarity = sceneResult.similarity;
+      reference = sceneResult.reference;
+      sceneOk = sceneResult.ok;
+
+      logger.info(
+        {
+          verificationId: verification_id,
+          referenceId: reference.id,
+          similarity,
+          sceneOk,
+          candidates: references.length,
+        },
+        'job: best reference selected via auto-match'
+      );
     }
-
-    const sceneResult = assessSceneMatch(uploadedEmbedding, references);
-    if (!sceneResult) {
-      throw new Error('Could not compute similarity against references');
-    }
-
-    const similarity = sceneResult.similarity;
-    const reference = sceneResult.reference;
-
-    logger.info(
-      {
-        verificationId: verification_id,
-        referenceId: reference.id,
-        similarity,
-        sceneOk: sceneResult.ok,
-        candidates: references.length,
-      },
-      'job: best reference selected'
-    );
 
     // Scene double-check — skip expensive vision on wrong-area photos
-    if (!sceneResult.ok) {
+    if (!sceneOk) {
       const rule = evaluateRules({
         similarity,
         vision: { passed: false, score: 0, confidence: 0, issues: ['wrong_task_area'] },
@@ -116,7 +135,7 @@ export async function processCleaningJob(job: Job<CleaningJobData>): Promise<unk
       );
       vision = {
         passed: false,
-        score: 0,
+        score: null,
         confidence: 0,
         issues: [`vision_error:${(err as Error).message}`],
         raw: null,

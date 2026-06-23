@@ -31,4 +31,17 @@ export const uploadImage = multer({
   },
 });
 
+export const uploadImagesBulk = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FILE_BYTES, files: 50 },
+  fileFilter: (_req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+    const mime = (file.mimetype ?? '').toLowerCase();
+    if (!ALLOWED_MIME.has(mime)) {
+      cb(new Error(`Unsupported mime type: ${mime || 'unknown'}`));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
 export const ALLOWED_IMAGE_MIME_TYPES = Array.from(ALLOWED_MIME);

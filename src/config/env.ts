@@ -60,7 +60,11 @@ const schema = z.object({
   CLIP_MODEL_NAME: z.string().default('Xenova/clip-vit-base-patch32'),
 
   // AI — Vision provider (pluggable)
-  VISION_PROVIDER: z.enum(['anthropic', 'openai']).default('anthropic'),
+  VISION_PROVIDER: z.enum(['anthropic', 'openai', 'gemini']).default('anthropic'),
+
+  // Gemini
+  GEMINI_API_KEY: z.string().optional(),
+  GEMINI_VISION_MODEL: z.string().default('gemini-2.5-flash'),
 
   // Anthropic Claude (default)
   ANTHROPIC_API_KEY: z.string().optional(),

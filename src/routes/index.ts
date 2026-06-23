@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { uploadImage } from '../middlewares/upload.js';
+import { uploadImage, uploadImagesBulk } from '../middlewares/upload.js';
 import {
   adminUploadReference,
   janitorUploadCompletion,
@@ -34,7 +34,7 @@ router.post(
 
 router.post(
   '/admin/upload-references/bulk',
-  uploadImage.array('images'),
+  uploadImagesBulk.array('images'),
   adminUploadReferencesBulk
 );
 
@@ -46,7 +46,7 @@ router.post(
 
 router.post(
   '/janitor/upload-completions/bulk',
-  uploadImage.array('images'),
+  uploadImagesBulk.array('images'),
   janitorUploadCompletionsBulk
 );
 
