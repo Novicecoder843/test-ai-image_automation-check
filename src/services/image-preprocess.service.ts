@@ -4,21 +4,9 @@ import { logger } from '../config/logger.js';
 import { AppError } from '../middlewares/error-handler.js';
 
 /**
- * Image preprocessing pipeline (sharp / libvips).
- *
- * Industry best-practice steps, applied to every image before storage AND
- * embedding so reference vs completion comparisons stay apples-to-apples:
- *
- *   1.  Decode safely (decompression-bomb guard via `limitInputPixels`)
- *   2.  Honor EXIF orientation (`.rotate()`)  ← required for phone photos
- *   3.  Convert to sRGB (predictable colour for CLIP + Vision)
- *   4.  Resize longest-side ≤ IMG_MAX_DIMENSION (no upscale)
- *   5.  Re-encode (mozjpeg or webp) at IMG_OUTPUT_QUALITY
- *   6.  Strip EXIF / GPS / ICC metadata (privacy + smaller file)
- *
- * Returns the processed buffer plus normalised mimetype + dimensions
- * for storage. The same buffer is fed to CLIP so embeddings match what's
- * persisted in object storage.
+ * Preprocesses images before storage and AI embedding.
+ * Resizes, strips metadata, and normalizes format to ensure consistency
+ * between reference and completion images.
  */
 
 // Process configuration once at boot — sharp tuning is global.
