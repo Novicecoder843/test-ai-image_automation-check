@@ -48,7 +48,7 @@ export async function processCleaningJob(job: Job<CleaningJobData>): Promise<unk
     let reference = await referenceRepo.getReferenceById(task_id);
     let sceneOk = true;
 
-    if (reference && reference.facility_id === facility_id) {
+    if (reference && reference.facility_id === facility_id && (template_id == null || reference.template_id === template_id)) {
       logger.info(
         { verificationId: verification_id, referenceId: reference.id },
         'job: using explicit reference selected by user'
@@ -135,7 +135,7 @@ export async function processCleaningJob(job: Job<CleaningJobData>): Promise<unk
       );
       vision = {
         passed: false,
-        score: null,
+        score: 0,
         confidence: 0,
         issues: [`vision_error:${(err as Error).message}`],
         raw: null,

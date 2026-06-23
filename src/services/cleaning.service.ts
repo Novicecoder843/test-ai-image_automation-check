@@ -11,11 +11,7 @@ import { enqueueCleaningVerification } from '../queue/cleaning.queue.js';
 import { AppError } from '../middlewares/error-handler.js';
 
 /**
- * Cleaning orchestrator — the only place HTTP handlers talk to.
- *
- *   adminUploadReference: synchronous (preprocess + quality + upload + embed + persist)
- *   janitorUploadCompletion: sync scene match + queue-based verification
- *   getTaskVerificationResult: latest row from DB
+ * Cleaning orchestrator
  */
 
 const REFERENCE_FOLDER = 'cleaning/references';
@@ -32,7 +28,7 @@ export function fetchUploadRequirements() {
   return getUploadRequirements();
 }
 
-// ─── Admin upload reference ─────────────────────────────────────────────
+// Admin upload reference
 
 export interface AdminUploadInput {
   facility_id: number;
@@ -145,7 +141,7 @@ export async function adminUploadReference(
   };
 }
 
-// ─── Janitor upload completion ──────────────────────────────────────────
+// Janitor upload completion
 
 export interface JanitorUploadInput {
   task_id: number;
@@ -195,7 +191,16 @@ export async function janitorUploadCompletion(
   const preprocessed = await preprocessImage(file.buffer);
   const qualityReport = await checkImageQuality(preprocessed.buffer, 'janitor');
 
-  // Scene match (sync) — before storage so wrong-area photos leave no side effects
+  // Scene match (sync) — before storage so wrong-area photos leave no side effects.
+  //
+  // ARCHITECTURAL INVARIANTS:
+  // 1. Dual-Checkpoint Design: This block performs an early sync check against `getReferencesForSceneMatch`.
+  //    The `cleaning.worker.ts` independently performs an async re-check using either the exact `reference_id` 
+  //    or auto-match to ensure ultimate correctness even if the upload environment changes.
+  // 2. Double-Embedding Cost: The CLIP embedding is computed here for the sync check, and again in 
+  //    the worker (via `generateImageEmbeddingFromUrl`). This is a deliberate trade-off to keep the 
+  //    queue payload simple (avoiding serialization of large Float32Arrays) and decouple the background 
+  //    worker from the API layer's transient state.
   let sceneMatchPercent = 0;
   let matchedReferenceId = 0;
 
@@ -297,7 +302,7 @@ export async function janitorUploadCompletion(
   };
 }
 
-// ─── Result lookup ──────────────────────────────────────────────────────
+// Result lookup
 
 function mapVerificationRow(row: Awaited<ReturnType<typeof verificationRepo.getLatestByTaskId>>) {
   if (!row) return null;

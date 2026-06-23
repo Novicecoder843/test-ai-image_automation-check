@@ -70,7 +70,6 @@ export async function adminUploadReference(req: Request, res: Response, next: Ne
     logger.info({ referenceId: result.id, dim: result.embedding_dim }, 'admin upload-reference: ok');
     res.status(201).json({ success: true, results: result });
   } catch (err) {
-    console.log(err)
     next(err);
   }
 }
@@ -216,16 +215,15 @@ export async function janitorUploadCompletionsBulk(req: Request, res: Response, 
 
     const batch_id = crypto.randomUUID();
 
-    const promises = files.map((file, idx) => {
+    // Process sequentially to avoid memory spikes
+    for (let idx = 0; idx < files.length; idx++) {
       const meta = parsedMeta.data[idx];
-      return cleaningService.janitorUploadCompletion({
+      await cleaningService.janitorUploadCompletion({
         ...meta,
-        file,
+        file: files[idx],
         batch_id,
       });
-    });
-
-    await Promise.all(promises);
+    }
 
     res.status(202).json({ success: true, batch_id });
   } catch (err) {

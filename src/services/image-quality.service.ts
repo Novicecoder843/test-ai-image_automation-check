@@ -5,23 +5,8 @@ import { AppError } from '../middlewares/error-handler.js';
 
 /**
  * Image quality gate.
- *
- * Runs AFTER preprocessing but BEFORE storage + embedding, for BOTH the admin
- * reference path and the janitor completion path. The goal is to stop
- * low-quality photos (blurry / too dark / overexposed / tiny / near-blank) from
- * silently producing a misleading FAIL during AI comparison.
- *
- * Why it matters:
- *   CLIP + the Vision LLM compare visual *content*. A bad photo lands far from
- *   the reference embedding → low cosine similarity → FAIL, even when the room
- *   is actually clean. By rejecting at upload time (HTTP 422) the janitor can
- *   re-shoot on the spot, and a weak admin reference can never poison every
- *   future comparison for that facility.
- *
- * All metrics come from sharp (`metadata()` + `stats()`), so there is no extra
- * dependency. Thresholds live in env (`IMG_QUALITY_*`) and can be tuned per
- * deployment; set `IMG_QUALITY_ENFORCE=false` to measure-and-log without
- * rejecting (recommended while calibrating on real data).
+ * Validates images against configured quality thresholds (resolution, sharpness, brightness, entropy)
+ * before processing to prevent poor quality uploads from causing false verification failures.
  */
 
 export type QualityReason =

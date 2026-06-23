@@ -51,20 +51,36 @@ const TABLE = 'cleaning_verifications';
 function hydrate(row: Record<string, unknown>): CleaningVerificationRow {
   const r = row as Record<string, unknown> & { embedding?: string };
   return {
-    ...(row as unknown as CleaningVerificationRow),
+    id: Number(r.id),
+    task_id: Number(r.task_id),
+    facility_id: Number(r.facility_id),
+    template_id: r.template_id != null ? Number(r.template_id) : null,
+    janitor_id: r.janitor_id != null ? String(r.janitor_id) : null,
+    reference_id: r.reference_id != null ? Number(r.reference_id) : null,
+    image_path: String(r.image_path),
+    image_url: r.image_url != null ? String(r.image_url) : null,
+    image_mime: r.image_mime != null ? String(r.image_mime) : null,
+    image_width: r.image_width != null ? Number(r.image_width) : null,
+    image_height: r.image_height != null ? Number(r.image_height) : null,
+    image_bytes: r.image_bytes != null ? Number(r.image_bytes) : null,
     embedding: r.embedding ? parsePgVectorLiteral(r.embedding) : null,
-    similarity_score:
-      r['similarity_score'] != null ? Number(r['similarity_score'] as number) : null,
-    scene_match_percent:
-      r['scene_match_percent'] != null ? Number(r['scene_match_percent'] as number) : null,
-    cleanliness_percent:
-      r['cleanliness_percent'] != null ? Number(r['cleanliness_percent'] as number) : null,
-    overall_percent:
-      r['overall_percent'] != null ? Number(r['overall_percent'] as number) : null,
-    vision_score: r['vision_score'] != null ? Number(r['vision_score'] as number) : null,
-    vision_confidence:
-      r['vision_confidence'] != null ? Number(r['vision_confidence'] as number) : null,
-    batch_id: r['batch_id'] != null ? String(r['batch_id']) : null,
+    similarity_score: r.similarity_score != null ? Number(r.similarity_score) : null,
+    scene_match_percent: r.scene_match_percent != null ? Number(r.scene_match_percent) : null,
+    cleanliness_percent: r.cleanliness_percent != null ? Number(r.cleanliness_percent) : null,
+    overall_percent: r.overall_percent != null ? Number(r.overall_percent) : null,
+    vision_passed: r.vision_passed != null ? Boolean(r.vision_passed) : null,
+    vision_score: r.vision_score != null ? Number(r.vision_score) : null,
+    vision_confidence: r.vision_confidence != null ? Number(r.vision_confidence) : null,
+    vision_issues: r.vision_issues != null ? (r.vision_issues as unknown[]) : null,
+    vision_raw: r.vision_raw != null ? r.vision_raw : null,
+    status: r.status as CleaningVerificationStatus,
+    rule_reason: r.rule_reason != null ? String(r.rule_reason) : null,
+    bull_job_id: r.bull_job_id != null ? String(r.bull_job_id) : null,
+    error_message: r.error_message != null ? String(r.error_message) : null,
+    created_at: r.created_at as Date,
+    processed_at: r.processed_at != null ? (r.processed_at as Date) : null,
+    updated_at: r.updated_at as Date,
+    batch_id: r.batch_id != null ? String(r.batch_id) : null,
   };
 }
 

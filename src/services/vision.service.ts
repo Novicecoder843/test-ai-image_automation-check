@@ -3,21 +3,7 @@ import { logger } from '../config/logger.js';
 import { GoogleGenAI } from '@google/genai';
 
 /**
- * Vision service — pluggable provider.
- *
- * Decides whether a janitor's completion image matches the reference clean
- * state and returns a strict JSON verdict:
- *
- *   { passed: boolean, score: number, confidence: number, issues: string[] }
- *
- * Provider is chosen by `VISION_PROVIDER` (default: anthropic).
- *
- *   - anthropic: Claude (Messages API, base64-inlined images so it works
- *                with local storage URLs that aren't publicly reachable).
- *   - openai:    GPT-4o Vision (image URLs sent directly).
- *
- * Both providers feed the same prompt + parser, so the worker contract
- * stays identical regardless of which one is active.
+ * Vision service — pluggable provider for cleanliness verification.
  */
 
 export interface VisionResult {
@@ -26,7 +12,7 @@ export interface VisionResult {
   confidence: number;   // 0..100
   issues: string[];
   raw?: unknown;
-  provider?: 'anthropic' | 'openai';
+  provider?: 'anthropic' | 'openai' | 'gemini';
   model?: string;
 }
 
@@ -66,7 +52,7 @@ const USER_INSTRUCTION =
   'Reference image (target clean state) is first; uploaded janitor image is second. ' +
   'Verify cleanliness and respond with the required JSON.';
 
-// ─── Shared helpers ─────────────────────────────────────────────────────
+// Shared helpers
 
 function parseStrictJson(content: string): Record<string, unknown> | null {
   if (!content) return null;
@@ -149,7 +135,19 @@ async function fetchImageAsBase64(
         `Allowed: ${Array.from(ALLOWED_VISION_MIME).join(', ')}`
     );
   }
-  const buf = Buffer.from(await res.arrayBuffer());
+
+  const contentLength = Number(res.headers.get('content-length') || '0');
+  const MAX_BYTES = 15 * 1024 * 1024; // 15MB
+  if (contentLength > MAX_BYTES) {
+    throw new Error(`Image size ${contentLength} exceeds maximum allowed 15MB`);
+  }
+
+  const arrayBuffer = await res.arrayBuffer();
+  if (arrayBuffer.byteLength > MAX_BYTES) {
+    throw new Error(`Image buffer size ${arrayBuffer.byteLength} exceeds maximum allowed 15MB`);
+  }
+
+  const buf = Buffer.from(arrayBuffer);
   return { base64: buf.toString('base64'), mediaType: mime };
 }
 
@@ -161,7 +159,7 @@ function guessMimeFromUrl(url: string): string {
   return 'image/jpeg';
 }
 
-// ─── Provider: Anthropic Claude ─────────────────────────────────────────
+// Provider: Anthropic Claude
 
 interface AnthropicMessagesResponse {
   content?: Array<{ type: string; text?: string }>;
@@ -216,38 +214,66 @@ async function analyzeWithAnthropic(
   };
 
   const startedAt = Date.now();
-  const response = await fetchWithTimeout(
-    env.ANTHROPIC_API_URL,
-    {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': env.ANTHROPIC_API_KEY,
-        'anthropic-version': env.ANTHROPIC_VERSION,
-      },
-      body: JSON.stringify(body),
-    },
-    env.ANTHROPIC_TIMEOUT_MS
-  );
+  let json: AnthropicMessagesResponse | undefined;
+  let attempts = 0;
+  const maxAttempts = 5;
+  const baseDelayMs = 2000;
 
-  if (!response.ok) {
-    const errText = await response.text().catch(() => '');
-    logger.error(
-      { status: response.status, body: errText.slice(0, 500) },
-      'anthropic vision failed'
-    );
-    throw new Error(
-      `Anthropic vision call failed: ${response.status} ${response.statusText} ${errText.slice(0, 200)}`
-    );
-  }
+  while (attempts < maxAttempts) {
+    try {
+      const response = await fetchWithTimeout(
+        env.ANTHROPIC_API_URL,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-api-key': env.ANTHROPIC_API_KEY,
+            'anthropic-version': env.ANTHROPIC_VERSION,
+          },
+          body: JSON.stringify(body),
+        },
+        env.ANTHROPIC_TIMEOUT_MS
+      );
 
-  const json = (await response.json()) as AnthropicMessagesResponse;
-  if (json.error) {
-    throw new Error(`Anthropic error: ${json.error.type ?? 'unknown'} ${json.error.message ?? ''}`);
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        throw new Error(`HTTP ${response.status}: ${errText}`);
+      }
+
+      json = (await response.json()) as AnthropicMessagesResponse;
+      if (json.error) {
+        throw new Error(`Anthropic error: ${json.error.type ?? 'unknown'} ${json.error.message ?? ''}`);
+      }
+      break;
+    } catch (error: any) {
+      attempts++;
+      const errorMessage = error?.message?.toLowerCase() || '';
+      const isRateLimited =
+        errorMessage.includes('503') ||
+        errorMessage.includes('429') ||
+        errorMessage.includes('overloaded') ||
+        errorMessage.includes('too many requests') ||
+        errorMessage.includes('http 429') ||
+        errorMessage.includes('http 503') ||
+        errorMessage.includes('http 529');
+
+      if (!isRateLimited || attempts >= maxAttempts) {
+        logger.error({ attempt: attempts, err: error.message }, 'anthropic vision failed');
+        throw new Error(`Anthropic vision call failed: ${error.message}`);
+      }
+
+      const delayMs = baseDelayMs * Math.pow(2, attempts - 1);
+      logger.warn(
+        { attempt: attempts, err: error.message, delayMs },
+        'Anthropic API is currently overloaded. Retrying shortly...'
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
   }
 
   const text =
-    (json.content ?? [])
+    (json!.content ?? [])
       .filter((c) => c.type === 'text' && typeof c.text === 'string')
       .map((c) => c.text as string)
       .join('\n')
@@ -264,8 +290,8 @@ async function analyzeWithAnthropic(
       provider: 'anthropic',
       model: env.ANTHROPIC_VISION_MODEL,
       durationMs: Date.now() - startedAt,
-      stopReason: json.stop_reason,
-      usage: json.usage,
+      stopReason: json!.stop_reason,
+      usage: json!.usage,
       passed: result.passed,
       score: result.score,
       confidence: result.confidence,
@@ -277,7 +303,7 @@ async function analyzeWithAnthropic(
   return result;
 }
 
-// ─── Provider: OpenAI GPT-4o ────────────────────────────────────────────
+// Provider: OpenAI GPT-4o
 
 function buildOpenAiUserContent(referenceUrl: string, uploadedUrl: string) {
   return [
@@ -305,34 +331,61 @@ async function analyzeWithOpenAi(
   };
 
   const startedAt = Date.now();
-  const response = await fetchWithTimeout(
-    env.OPENAI_API_URL,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify(body),
-    },
-    env.OPENAI_TIMEOUT_MS
-  );
+  let json: { choices?: Array<{ message?: { content?: string } }> } | undefined;
+  let attempts = 0;
+  const maxAttempts = 5;
+  const baseDelayMs = 2000;
 
-  if (!response.ok) {
-    const errText = await response.text().catch(() => '');
-    logger.error(
-      { status: response.status, body: errText.slice(0, 500) },
-      'openai vision failed'
-    );
-    throw new Error(
-      `OpenAI vision call failed: ${response.status} ${response.statusText} ${errText.slice(0, 200)}`
-    );
+  while (attempts < maxAttempts) {
+    try {
+      const response = await fetchWithTimeout(
+        env.OPENAI_API_URL,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+          },
+          body: JSON.stringify(body),
+        },
+        env.OPENAI_TIMEOUT_MS
+      );
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        throw new Error(`HTTP ${response.status}: ${errText}`);
+      }
+
+      json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+      break;
+    } catch (error: any) {
+      attempts++;
+      const errorMessage = error?.message?.toLowerCase() || '';
+      const isRateLimited =
+        errorMessage.includes('503') ||
+        errorMessage.includes('429') ||
+        errorMessage.includes('overloaded') ||
+        errorMessage.includes('too many requests') ||
+        errorMessage.includes('http 429') ||
+        errorMessage.includes('http 503') ||
+        errorMessage.includes('http 529');
+
+      if (!isRateLimited || attempts >= maxAttempts) {
+        logger.error({ attempt: attempts, err: error.message }, 'openai vision failed');
+        throw new Error(`OpenAI vision call failed: ${error.message}`);
+      }
+
+      const delayMs = baseDelayMs * Math.pow(2, attempts - 1);
+      logger.warn(
+        { attempt: attempts, err: error.message, delayMs },
+        'OpenAI API is currently overloaded. Retrying shortly...'
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
   }
 
-  const json = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  const content = json.choices?.[0]?.message?.content ?? '';
+  const content = json?.choices?.[0]?.message?.content ?? '';
 
   const result: VisionResult = {
     ...normalize(parseStrictJson(content)),
@@ -356,7 +409,7 @@ async function analyzeWithOpenAi(
   return result;
 }
 
-// ─── Provider: Google Gemini ──────────────────────────────────────────────
+// Provider: Google Gemini
 
 async function analyzeWithGemini(
   referenceImageUrl: string,
@@ -457,7 +510,7 @@ async function analyzeWithGemini(
   return result;
 }
 
-// ─── Public entrypoint ──────────────────────────────────────────────────
+// Public entrypoint
 
 export async function analyzeCleanliness(
   referenceImageUrl: string,

@@ -210,5 +210,3 @@ export function evaluateRules(input: RuleInput): ScoringResult {
   };
 }
 
-/** @deprecated use ScoringResult — kept for callers expecting RuleResult shape */
-export type RuleResult = ScoringResult;
