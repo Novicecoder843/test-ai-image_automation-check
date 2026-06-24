@@ -37,7 +37,8 @@ End-to-end contract for **single upload** (per-slot mobile UI) and **batch uploa
 | `GET` | `/api/templates/:templateId/reference-slots` | Slot config | **New** |
 | `POST` | `/api/admin/upload-reference` | Single sync | **Exists** (extend metadata) |
 | `POST` | `/api/admin/reference-batches` | Batch async | **New** |
-| `GET` | `/api/admin/reference-batches/:batchId` | Poll batch | **New** |
+| `GET` | `/api/admin/reference-batches/:batchId` | Poll batch (fallback) | **New** |
+| `GET` | `/api/admin/reference-batches/:batchId/events` | SSE progress stream | **New** — see [`BATCH_UPLOAD_SSE.md`](./BATCH_UPLOAD_SSE.md) |
 | `POST` | `/api/admin/reference-batches/:batchId/retry` | Retry failed items | **New** |
 | `GET` | `/api/facilities/:facilityId/references` | List library | **New** |
 | `DELETE` | `/api/admin/references/:referenceId` | Soft delete | **New** |
@@ -656,6 +657,7 @@ curl -X POST http://localhost:4000/api/admin/reference-batches \
     "total_count": 2,
     "succeeded_count": 0,
     "failed_count": 0,
+    "events_url": "/api/admin/reference-batches/b7c2a1f0-3e4d-5f6a-8b9c-0d1e2f3a4b5c/events",
     "poll_url": "/api/admin/reference-batches/b7c2a1f0-3e4d-5f6a-8b9c-0d1e2f3a4b5c",
     "poll_interval_ms": 1500,
     "items": [
@@ -950,7 +952,7 @@ Same stages for single (sync) and batch (async per item):
 | Load file limits | `GET /upload-requirements` |
 | Tap one slot → upload | `POST /admin/upload-reference` |
 | Upload Multiple → tag → Submit | `POST /admin/reference-batches` |
-| Progress overlay | Poll `GET /reference-batches/:id` |
+| Progress overlay | SSE `GET /reference-batches/:id/events` (fallback: poll `GET /reference-batches/:id`) |
 | Error modal table | `results.failed_items[]` or filter `items` where `status=FAILED` |
 | Retry failed | `POST /reference-batches/:id/retry` |
 | Trash icon (after save) | `DELETE /admin/references/:id` |
@@ -975,6 +977,7 @@ Same stages for single (sync) and batch (async per item):
 | `GET /upload-requirements` | Implemented |
 | Batch tables + worker | **Not implemented** |
 | `POST/GET reference-batches` | **Not implemented** |
+| Batch SSE progress (`GET …/events`) | **Not implemented** — design: [`BATCH_UPLOAD_SSE.md`](./BATCH_UPLOAD_SSE.md) |
 | Reference slots/categories API | **Not implemented** |
 | `DELETE` reference | **Not implemented** |
 | Reference scene validation on admin upload | **Not implemented** |
@@ -984,4 +987,5 @@ Same stages for single (sync) and batch (async per item):
 ## Related documents
 
 - [`DESIGN.md`](../DESIGN.md) — system architecture and verification flows
+- [`BATCH_UPLOAD_SSE.md`](./BATCH_UPLOAD_SSE.md) — real-time batch progress via Server-Sent Events
 - [`README.md`](../README.md) — install, run, and current API reference
