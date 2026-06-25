@@ -1,21 +1,14 @@
 import { env } from '../config/env.js';
 import type { VisionResult } from './vision.service.js';
 
-/**
- * Rule Engine v2 — percentage-based PASS / FAIL / MANUAL_REVIEW / INVALID_TASK
- *
- *   INVALID_TASK:  scene similarity below SCENE_MATCH_MIN (wrong area)
- *   PASS:           scene ok + similarity ≥ pass + cleanliness ≥ 80 + vision.passed
- *   FAIL:           scene ok + (cleanliness < 50 OR low score + stain-type issues)
- *   MANUAL_REVIEW:  everything else in the gray zone
- */
+// Rule Engine v2 - returns PASS, FAIL, MANUAL_REVIEW, or INVALID_TASK
 
 export type CleaningDecision = 'PASS' | 'FAIL' | 'MANUAL_REVIEW' | 'INVALID_TASK';
 
 export interface RuleInput {
   similarity: number;
   vision: VisionResult;
-  /** When false, decision is INVALID_TASK regardless of vision. Default true. */
+  // If false, decision is INVALID_TASK regardless of vision
   sceneMatchOk?: boolean;
 }
 
@@ -122,7 +115,7 @@ export function evaluateRules(input: RuleInput): ScoringResult {
     };
   }
 
-  // Legacy low-similarity fail (when scene enforce is off)
+  // Fail if similarity is too low
   if (!env.SCENE_MATCH_ENFORCE && similarity < thresholds.similarity_fail) {
     return {
       decision: 'FAIL',
@@ -153,7 +146,7 @@ export function evaluateRules(input: RuleInput): ScoringResult {
     };
   }
 
-  // FAIL — clearly not clean enough
+  // FAIL - not clean enough
   if (
     score < thresholds.vision_fail_score ||
     (score < thresholds.vision_review_score && hasCleanlinessDefectIssues(issues))
@@ -171,7 +164,7 @@ export function evaluateRules(input: RuleInput): ScoringResult {
     };
   }
 
-  // PASS — both scene and cleanliness strong
+  // PASS - both scene and cleanliness strong
   if (
     similarity >= thresholds.similarity_pass &&
     score >= thresholds.vision_pass_score &&
@@ -187,7 +180,7 @@ export function evaluateRules(input: RuleInput): ScoringResult {
     };
   }
 
-  // MANUAL_REVIEW — gray zone
+  // MANUAL_REVIEW - gray zone
   const inSimilarityGray =
     similarity >= thresholds.similarity_fail && similarity <= thresholds.similarity_pass;
 

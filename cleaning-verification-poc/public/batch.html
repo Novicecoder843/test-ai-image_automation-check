@@ -3,20 +3,27 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Cleaning Verification</title>
+  <title>Cleaning Verification v2</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #0f1419;
-      --surface: #1a2332;
-      --border: #2d3a4f;
-      --text: #e7ecf3;
-      --muted: #8b9cb3;
-      --accent: #3b82f6;
-      --accent-hover: #2563eb;
-      --pass: #22c55e;
-      --fail: #ef4444;
-      --warn: #f59e0b;
-      --pending: #6366f1;
+      --bg: #0B1220;
+      --surface: #111A2E;
+      --border: rgba(255, 255, 255, 0.06);
+      --border-hover: rgba(255, 255, 255, 0.15);
+      --text: #F3F4F6;
+      --muted: #9CA3AF;
+      --accent: #6366F1;
+      --accent-hover: #4F46E5;
+      --accent-glow: rgba(99, 102, 241, 0.4);
+      --success: #10B981;
+      --success-bg: rgba(16, 185, 129, 0.1);
+      --fail: #EF4444;
+      --fail-bg: rgba(239, 68, 68, 0.1);
+      --warn: #F59E0B;
+      --warn-bg: rgba(245, 158, 11, 0.1);
     }
 
     * { box-sizing: border-box; }
@@ -24,360 +31,553 @@
     body {
       margin: 0;
       min-height: 100vh;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      background: var(--bg);
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg);
       color: var(--text);
       line-height: 1.5;
+      position: relative;
+    }
+
+    /* Subtle grid background */
+    body::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-image: linear-gradient(var(--border) 1px, transparent 1px),
+                        linear-gradient(90deg, var(--border) 1px, transparent 1px);
+      background-size: 40px 40px;
+      opacity: 0.3;
+      z-index: -1;
+      pointer-events: none;
     }
 
     .container {
-      max-width: 960px;
+      max-width: 1200px;
       margin: 0 auto;
-      padding: 2rem 1.25rem 3rem;
+      padding: 3rem 2rem 5rem;
     }
 
-    header {
-      margin-bottom: 2rem;
+    /* Status Strip */
+    .status-strip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--muted);
+      background: var(--surface);
+      padding: 0.35rem 0.75rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      margin-bottom: 1.5rem;
+    }
+    .status-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
     }
 
+    /* Header */
+    header { margin-bottom: 2rem; }
     header h1 {
-      margin: 0 0 0.35rem;
-      font-size: 1.75rem;
+      margin: 0 0 0.5rem;
+      font-size: 2.25rem;
       font-weight: 700;
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .title-gradient {
+      position: relative;
+      display: inline-block;
+    }
+    .title-gradient::after {
+      content: '';
+      position: absolute;
+      bottom: -4px; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, var(--accent), var(--success));
+      border-radius: 2px;
     }
 
-    header p {
-      margin: 0;
+    /* Progress Stepper */
+    .stepper {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      font-size: 0.85rem;
+      font-weight: 500;
       color: var(--muted);
     }
+    .step {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .step.active { color: var(--text); }
+    .step.active .step-num { background: var(--accent); color: white; border-color: var(--accent); }
+    .step.completed .step-num { background: var(--success); color: white; border-color: var(--success); }
+    .step-num {
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.7rem;
+    }
+    .stepper-divider {
+      flex: 1; height: 1px;
+      background: var(--border);
+      max-width: 40px;
+    }
 
+    /* Cards */
     .card {
       background: var(--surface);
       border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 2rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    }
+
+    /* Settings Accordion */
+    details.settings-accordion {
+      background: var(--surface);
+      border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 1.25rem;
-      margin-bottom: 1.25rem;
+      margin-bottom: 1.5rem;
     }
-
-    .card h2 {
-      margin: 0 0 1rem;
-      font-size: 1rem;
+    details.settings-accordion summary {
+      padding: 1.25rem 1.5rem;
       font-weight: 600;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
+      cursor: pointer;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
     }
-
-    .fields {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-      gap: 0.75rem;
-      margin-bottom: 1rem;
+    details.settings-accordion summary::-webkit-details-marker { display: none; }
+    .settings-saved {
+      font-size: 0.75rem;
+      color: var(--success);
+      background: var(--success-bg);
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+      display: flex; align-items: center; gap: 0.25rem;
     }
-
-    label {
-      display: block;
-      font-size: 0.8rem;
-      color: var(--muted);
-      margin-bottom: 0.35rem;
+    .settings-body {
+      padding: 0 1.5rem 1.5rem;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 1rem;
+      margin-top: 1rem;
+      padding-top: 1rem;
     }
-
-    input[type="number"] {
+    .floating-field {
+      position: relative;
+      flex: 1;
+    }
+    .floating-field input {
       width: 100%;
-      padding: 0.55rem 0.65rem;
+      background: rgba(0,0,0,0.2);
       border: 1px solid var(--border);
       border-radius: 8px;
-      background: var(--bg);
+      padding: 1.25rem 1rem 0.5rem;
       color: var(--text);
-      font-size: 0.95rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9rem;
+      transition: border-color 0.2s;
+    }
+    .floating-field input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    .floating-field label {
+      position: absolute;
+      top: 0.4rem; left: 1rem;
+      font-size: 0.65rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
 
-    .upload-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
+    /* Workspace */
+    .workspace {
+      display: flex;
+      gap: 1.5rem;
+      position: relative;
+    }
+    .panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
       gap: 1rem;
     }
-
-    @media (max-width: 640px) {
-      .upload-grid { grid-template-columns: 1fr; }
+    .panel-header {
+      font-weight: 600;
+      font-size: 0.95rem;
+      color: var(--muted);
+    }
+    .workspace-divider {
+      width: 1px;
+      background: var(--border);
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .workspace-divider span {
+      position: absolute;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.75rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: 999px;
+      white-space: nowrap;
+      font-weight: 500;
+      z-index: 2;
     }
 
+    /* Dropzone */
     .dropzone {
+      flex: 1;
       border: 2px dashed var(--border);
-      border-radius: 10px;
-      padding: 1.25rem;
-      text-align: center;
-      cursor: pointer;
-      transition: border-color 0.15s, background 0.15s;
-      min-height: 180px;
+      border-radius: 12px;
+      padding: 2rem;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 0.5rem;
+      text-align: center;
+      min-height: 200px;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: rgba(0,0,0,0.1);
     }
-
-    .dropzone:hover,
-    .dropzone.dragover {
+    .dropzone:hover, .dropzone.dragover {
       border-color: var(--accent);
-      background: rgba(59, 130, 246, 0.06);
+      background: var(--accent-glow);
     }
-
-    .dropzone.has-file {
-      border-style: solid;
-      border-color: var(--accent);
-    }
-
-    .dropzone img {
-      max-width: 100%;
-      max-height: 140px;
-      border-radius: 6px;
-      object-fit: contain;
-    }
-
-    .dropzone .placeholder {
+    .dropzone svg {
+      width: 32px; height: 32px;
       color: var(--muted);
-      font-size: 0.9rem;
+      margin-bottom: 1rem;
+      transition: color 0.2s;
     }
+    .dropzone:hover svg { color: var(--accent); }
 
-    .dropzone .filename {
-      font-size: 0.85rem;
-      word-break: break-all;
-    }
-
-    input[type="file"] { display: none; }
-
-    .actions {
+    /* Thumbnails */
+    .thumb-strip {
       display: flex;
-      flex-wrap: wrap;
       gap: 0.75rem;
-      margin-top: 1.25rem;
+      overflow-x: auto;
+      padding: 0.5rem 0;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+    .thumb-strip::-webkit-scrollbar { height: 6px; }
+    .thumb-strip::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    .thumb-card {
+      position: relative;
+      width: 120px;
+      flex-shrink: 0;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .thumb-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    .thumb-card img {
+      width: 100%;
+      height: 90px;
+      object-fit: cover;
+    }
+    .thumb-meta {
+      padding: 0.5rem;
+      font-size: 0.65rem;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .thumb-remove {
+      position: absolute;
+      top: 4px; right: 4px;
+      background: rgba(0,0,0,0.6);
+      color: white;
+      border: none;
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      font-size: 0.7rem;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; transition: opacity 0.2s;
+    }
+    .thumb-card:hover .thumb-remove { opacity: 1; }
+    
+    .ref-selected {
+      border-color: var(--success);
+      box-shadow: 0 0 0 1px var(--success), 0 0 12px var(--success-bg);
+    }
+
+    /* Actions Bar */
+    .action-bar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 1rem;
+      margin-top: 2rem;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border);
     }
 
     button {
-      padding: 0.65rem 1.25rem;
-      border: none;
+      padding: 0.75rem 1.5rem;
       border-radius: 8px;
       font-size: 0.95rem;
       font-weight: 600;
       cursor: pointer;
-      transition: background 0.15s, opacity 0.15s;
+      transition: all 0.2s;
+      font-family: inherit;
+      display: flex; align-items: center; gap: 0.5rem;
     }
-
     button:disabled {
       opacity: 0.5;
       cursor: not-allowed;
     }
-
     .btn-primary {
-      background: var(--accent);
-      color: #fff;
+      background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+      color: white;
+      border: none;
+      box-shadow: 0 4px 12px var(--accent-glow);
     }
-
     .btn-primary:hover:not(:disabled) {
-      background: var(--accent-hover);
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px var(--accent-glow);
     }
-
-    .btn-secondary {
+    .btn-ghost {
       background: transparent;
       color: var(--text);
       border: 1px solid var(--border);
     }
-
-    .btn-secondary:hover:not(:disabled) {
-      background: rgba(255, 255, 255, 0.04);
+    .btn-ghost:hover:not(:disabled) {
+      background: rgba(255,255,255,0.05);
+      border-color: var(--border-hover);
+    }
+    .btn-danger-ghost {
+      background: transparent;
+      color: var(--fail);
+      border: none;
+      padding: 0.75rem;
+    }
+    .btn-danger-ghost:hover:not(:disabled) {
+      background: var(--fail-bg);
     }
 
-    .status-bar {
-      display: none;
-      align-items: center;
-      gap: 0.65rem;
-      padding: 0.75rem 1rem;
-      border-radius: 8px;
-      margin-bottom: 1rem;
-      font-size: 0.9rem;
+    /* Toast Banner */
+    .toast-container {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-top: 1rem;
     }
-
-    .status-bar.visible { display: flex; }
-
-    .status-bar.info {
-      background: rgba(99, 102, 241, 0.15);
-      border: 1px solid rgba(99, 102, 241, 0.35);
-    }
-
-    .status-bar.error {
-      background: rgba(239, 68, 68, 0.12);
-      border: 1px solid rgba(239, 68, 68, 0.35);
-    }
-
-    .spinner {
-      width: 18px;
-      height: 18px;
-      border: 2px solid rgba(255, 255, 255, 0.25);
-      border-top-color: #fff;
-      border-radius: 50%;
-      animation: spin 0.7s linear infinite;
-      flex-shrink: 0;
-    }
-
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    .result-header {
+    .toast {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
       gap: 0.75rem;
-      margin-bottom: 1rem;
-    }
-
-    .badge {
-      display: inline-block;
-      padding: 0.35rem 0.85rem;
-      border-radius: 999px;
-      font-size: 0.85rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-    }
-
-    .badge.pass { background: rgba(34, 197, 94, 0.2); color: var(--pass); }
-    .badge.fail { background: rgba(239, 68, 68, 0.2); color: var(--fail); }
-    .badge.review { background: rgba(245, 158, 11, 0.2); color: var(--warn); }
-    .badge.pending { background: rgba(99, 102, 241, 0.2); color: var(--pending); }
-    .badge.invalid { background: rgba(239, 68, 68, 0.15); color: #f87171; }
-
-    .metrics {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-      gap: 0.75rem;
-      margin-bottom: 1rem;
-    }
-
-    .metric {
-      background: var(--bg);
+      padding: 0.75rem 1rem;
       border-radius: 8px;
-      padding: 0.75rem;
-      text-align: center;
+      font-size: 0.85rem;
+      animation: slideIn 0.3s ease-out forwards;
+    }
+    .toast.success { background: var(--success-bg); color: var(--success); border: 1px solid rgba(16,185,129,0.2); }
+    .toast.info { background: rgba(99,102,241,0.1); color: var(--accent); border: 1px solid rgba(99,102,241,0.2); }
+    .toast.error { background: var(--fail-bg); color: var(--fail); border: 1px solid rgba(239,68,68,0.2); }
+    
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
     }
 
-    .metric .value {
-      font-size: 1.5rem;
-      font-weight: 700;
+    /* Shimmer Animation */
+    .shimmer-active {
+      position: relative;
+      overflow: hidden;
+    }
+    .shimmer-active::after {
+      content: '';
+      position: absolute;
+      top: 0; left: -100%; width: 50%; height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+      animation: shimmer 1.5s infinite;
+      z-index: 10;
+      pointer-events: none;
+    }
+    @keyframes shimmer {
+      100% { left: 200%; }
     }
 
-    .metric .label {
-      font-size: 0.75rem;
-      color: var(--muted);
-      margin-top: 0.15rem;
+    /* Results */
+    .result-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1rem;
+      width: 100%;
+      margin-top: 1rem;
     }
-
-    .issues {
-      margin: 0 0 1rem;
-      padding-left: 1.25rem;
-      color: var(--muted);
-    }
-
-    .issues li { margin-bottom: 0.25rem; }
-
-    .reason {
-      font-size: 0.9rem;
-      color: var(--muted);
-      margin-bottom: 1rem;
-    }
-
-    pre.json {
+    .result-card {
       background: var(--bg);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: 12px;
       padding: 1rem;
-      overflow: auto;
-      font-size: 0.78rem;
-      line-height: 1.45;
-      margin: 0;
-      max-height: 320px;
+      display: flex; flex-direction: column; gap: 0.75rem;
+      position: relative;
     }
-
-    #result-section { display: none; }
-    #result-section.visible { display: block; }
-
-    .ref-status {
-      font-size: 0.85rem;
-      color: var(--pass);
-      margin-top: 0.5rem;
-      min-height: 1.25rem;
+    .match-score {
+      position: absolute;
+      top: -10px; right: -10px;
+      width: 44px; height: 44px;
+      border-radius: 50%;
+      background: var(--surface);
+      border: 2px solid var(--success);
+      color: var(--success);
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700;
+      font-size: 0.8rem;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.5);
+      z-index: 10;
     }
-
-    .ref-status.pending { color: var(--muted); }
+    .match-score.fail { border-color: var(--fail); color: var(--fail); }
+    .match-score.review { border-color: var(--warn); color: var(--warn); }
+    
+    .result-images {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+    }
+    .result-images img {
+      width: 100%;
+      aspect-ratio: 1/1;
+      object-fit: cover;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+    .result-meta {
+      font-size: 0.75rem;
+      color: var(--muted);
+      text-align: center;
+      margin-bottom: 0.25rem;
+    }
+    .result-details {
+      font-size: 0.8rem;
+      display: flex; flex-direction: column; gap: 0.25rem;
+    }
+    
+    .hidden { display: none !important; }
+    
+    /* Input file hidden */
+    input[type="file"] { display: none; }
+    
+    input[type="file"] { display: none; }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
-      <h1>Cleaning Verification</h1>
-      <p>Upload a reference image, then a task completion photo, and compare them with AI.</p>
+      <h1>
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--accent)"><path d="M12 3v18M3 12h18M18 6l-12 12M6 6l12 12"/></svg>
+        <span class="title-gradient">Cleaning Verification</span>
+      </h1>
+      <p style="color: var(--muted); font-size: 0.9rem; margin-top: 0;">Upload reference baseline photos, then task completion photos, and let AI compare them.</p>
     </header>
 
-    <div class="card">
-      <h2>Settings</h2>
-      <div class="fields">
-        <div>
-          <label for="facility-id">Facility ID</label>
-          <input type="number" id="facility-id" value="42" min="1" />
-        </div>
-        <div>
-          <label for="template-id">Template ID</label>
-          <input type="number" id="template-id" value="168" min="1" />
-        </div>
-        <div>
-          <label for="task-id">Task ID</label>
-          <input type="number" id="task-id" value="9001" min="1" />
-        </div>
-      </div>
+    <div class="stepper">
+      <div class="step active" id="step-1"><div class="step-num">1</div>Upload References</div>
+      <div class="stepper-divider"></div>
+      <div class="step" id="step-2"><div class="step-num">2</div>Upload Tasks</div>
+      <div class="stepper-divider"></div>
+      <div class="step" id="step-3"><div class="step-num">3</div>Verify</div>
     </div>
 
-    <div class="card">
-      <h2>Images</h2>
-      <div class="upload-grid">
-        <div>
-          <label>Reference images (multiple baseline photos)</label>
-          <div class="dropzone" id="ref-dropzone" tabindex="0" role="button" aria-label="Upload reference images">
-            <span class="placeholder">Click or drop reference images</span>
+    <details class="settings-accordion" open>
+      <summary>
+        <span>Settings</span>
+        <div class="settings-saved"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:2px"><polyline points="20 6 9 17 4 12"></polyline></svg>Saved</div>
+      </summary>
+      <div class="settings-body">
+        <div class="floating-field">
+          <input type="number" id="facility-id" value="42" min="1" />
+          <label>Facility ID</label>
+        </div>
+        <div class="floating-field">
+          <input type="number" id="template-id" value="168" min="1" />
+          <label>Template ID</label>
+        </div>
+        <div class="floating-field">
+          <input type="number" id="task-id" value="9001" min="1" />
+          <label>Task ID</label>
+        </div>
+      </div>
+    </details>
+
+    <div class="card" id="main-card">
+      <div class="workspace">
+        <!-- References Panel -->
+        <div class="panel ref-panel">
+          <div class="panel-header">Reference images (multiple baseline photos)</div>
+          
+          <div class="dropzone" id="ref-dropzone">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            <div>Click or drop reference images</div>
+            <div style="font-size: 0.75rem; color: var(--muted); margin-top: 0.5rem">PNG, JPG, WEBP up to 10MB</div>
           </div>
           <input type="file" id="ref-file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" multiple />
-          <div class="ref-status pending" id="ref-status">No references uploaded yet</div>
-          <div id="ref-gallery" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 10px; margin-top: 10px;"></div>
-        </div>
-        <div>
-          <label>Task image (completion photo)</label>
-          <div class="dropzone" id="task-dropzone" tabindex="0" role="button" aria-label="Upload task image">
-            <span class="placeholder">Click or drop task image</span>
+          
+          <div class="thumb-strip" id="ref-strip"></div>
+          
+          <div style="margin-top: 0.5rem;">
+            <button type="button" class="btn-ghost" id="btn-upload-ref" style="width: 100%; justify-content: center;">Upload References</button>
           </div>
-          <input type="file" id="task-file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" />
+        </div>
+
+        <div class="workspace-divider"><span>⇄ Compare</span></div>
+
+        <!-- Tasks Panel -->
+        <div class="panel task-panel">
+          <div class="panel-header" id="task-panel-header">Task images (multiple completion photos)</div>
+          
+          <div class="dropzone" id="task-dropzone">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <div>Click or drop task images</div>
+            <div style="font-size: 0.75rem; color: var(--muted); margin-top: 0.5rem">Upload after references are ready</div>
+          </div>
+          <input type="file" id="task-file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" multiple />
+          
+          <div class="thumb-strip" id="task-strip"></div>
+          
+          <!-- Results Container (Hidden initially) -->
+          <div id="results-container" class="hidden"></div>
         </div>
       </div>
+      
+      <div class="toast-container" id="toast-container"></div>
 
-      <div class="actions">
-        <button type="button" class="btn-secondary" id="btn-upload-ref">Upload References</button>
-        <button type="button" class="btn-primary" id="btn-compare">Compare &amp; Verify</button>
-        <button type="button" class="btn-secondary" id="btn-reset">Reset</button>
+      <div class="action-bar" style="justify-content: space-between;">
+        <div id="batch-id-display" style="color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; font-weight: 600;"></div>
+        <div style="display: flex; gap: 1rem;">
+          <button type="button" class="btn-danger-ghost" id="btn-reset">Reset</button>
+          <button type="button" class="btn-primary" id="btn-compare">Compare &amp; Verify</button>
+        </div>
       </div>
-    </div>
-
-    <div class="status-bar info" id="status-bar">
-      <div class="spinner" id="status-spinner"></div>
-      <span id="status-text">Working…</span>
-    </div>
-
-    <div class="card" id="result-section">
-      <div class="result-header">
-        <h2 style="margin:0">Result</h2>
-        <span class="badge pending" id="result-badge">—</span>
-      </div>
-      <div class="metrics" id="metrics"></div>
-      <p class="reason" id="rule-reason"></p>
-      <ul class="issues" id="issues-list" hidden></ul>
-      <pre class="json" id="result-json"></pre>
     </div>
   </div>
 
@@ -386,30 +586,45 @@
     const taskDropzone = document.getElementById('task-dropzone');
     const refFileInput = document.getElementById('ref-file');
     const taskFileInput = document.getElementById('task-file');
-    const refStatus = document.getElementById('ref-status');
-    const statusBar = document.getElementById('status-bar');
-    const statusText = document.getElementById('status-text');
-    const statusSpinner = document.getElementById('status-spinner');
-    const resultSection = document.getElementById('result-section');
-    const resultBadge = document.getElementById('result-badge');
-    const metricsEl = document.getElementById('metrics');
-    const ruleReasonEl = document.getElementById('rule-reason');
-    const issuesList = document.getElementById('issues-list');
-    const resultJson = document.getElementById('result-json');
+    const refStrip = document.getElementById('ref-strip');
+    const taskStrip = document.getElementById('task-strip');
+    const toastContainer = document.getElementById('toast-container');
+    const mainCard = document.getElementById('main-card');
+    const resultsContainer = document.getElementById('results-container');
+    const btnCompare = document.getElementById('btn-compare');
+    const btnUploadRef = document.getElementById('btn-upload-ref');
 
-    let refFile = null;
-    let taskFile = null;
+    let refFiles = [];
+    let taskFiles = [];
     let referenceUploaded = false;
-    let referenceId = null;
+    let referencesList = [];
+    let currentBatchId = null;
+
+    // Stepper elements
+    const step1 = document.getElementById('step-1');
+    const step2 = document.getElementById('step-2');
+    const step3 = document.getElementById('step-3');
+
+    function updateStepper() {
+      if (referenceUploaded) {
+        step1.classList.add('completed');
+        step2.classList.add('active');
+      } else {
+        step1.classList.remove('completed');
+        step1.classList.add('active');
+        step2.classList.remove('active', 'completed');
+      }
+      
+      if (taskFiles.length > 0) {
+        step2.classList.add('completed');
+        step3.classList.add('active');
+      } else {
+        step3.classList.remove('active', 'completed');
+      }
+    }
 
     function setupDropzone(dropzone, input, onSelect) {
       dropzone.addEventListener('click', () => input.click());
-      dropzone.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          input.click();
-        }
-      });
       dropzone.addEventListener('dragover', (e) => {
         e.preventDefault();
         dropzone.classList.add('dragover');
@@ -426,61 +641,67 @@
       });
     }
 
-    function previewFiles(dropzone, files, isMultiple) {
-      dropzone.classList.add('has-file');
-      dropzone.innerHTML = '';
-      if (!isMultiple) {
-        const img = document.createElement('img');
-        img.src = URL.createObjectURL(files[0]);
-        img.alt = files[0].name;
-        dropzone.appendChild(img);
-        const name = document.createElement('div');
-        name.className = 'filename';
-        name.textContent = files[0].name;
-        dropzone.appendChild(name);
-      } else {
-        const grid = document.createElement('div');
-        grid.style.display = 'grid';
-        grid.style.gridTemplateColumns = 'repeat(auto-fill, minmax(60px, 1fr))';
-        grid.style.gap = '8px';
-        grid.style.width = '100%';
-        grid.style.maxHeight = '120px';
-        grid.style.overflowY = 'auto';
-        grid.style.padding = '8px';
-        
-        Array.from(files).forEach(f => {
-          const img = document.createElement('img');
-          img.src = URL.createObjectURL(f);
-          img.style.width = '100%';
-          img.style.height = '60px';
-          img.style.objectFit = 'cover';
-          img.style.borderRadius = '4px';
-          grid.appendChild(img);
-        });
-        
-        dropzone.appendChild(grid);
-        
-        const msg = document.createElement('div');
-        msg.className = 'filename';
-        msg.textContent = `${files.length} images selected ready for upload. Click "Upload References".`;
-        dropzone.appendChild(msg);
-      }
+    function renderThumbnails(files, stripElement, isRef) {
+      stripElement.innerHTML = '';
+      if (files.length === 0) return;
+      
+      files.forEach((f, idx) => {
+        const url = URL.createObjectURL(f);
+        const sizeKb = (f.size / 1024).toFixed(1);
+        const card = document.createElement('div');
+        card.className = 'thumb-card';
+        card.innerHTML = `
+          <img src="${url}" alt="thumb">
+          <div class="thumb-meta" title="${f.name}">${f.name}<br/>${sizeKb} KB</div>
+          <button class="thumb-remove" onclick="removeFile(${idx}, ${isRef})">✕</button>
+        `;
+        stripElement.appendChild(card);
+      });
+      updateStepper();
     }
 
+    window.removeFile = (idx, isRef) => {
+      if (isRef) {
+        refFiles.splice(idx, 1);
+        referenceUploaded = false; // Need to re-upload if changed
+        renderThumbnails(refFiles, refStrip, true);
+        if(refFiles.length === 0) refDropzone.classList.remove('hidden');
+      } else {
+        taskFiles.splice(idx, 1);
+        renderThumbnails(taskFiles, taskStrip, false);
+        if(taskFiles.length === 0) taskDropzone.classList.remove('hidden');
+      }
+    };
+
     setupDropzone(refDropzone, refFileInput, (files) => {
-      refFile = Array.from(files);
+      refFiles = Array.from(files);
       referenceUploaded = false;
-      referenceId = null;
-      document.getElementById('ref-gallery').innerHTML = '';
-      refStatus.textContent = `${refFile.length} references selected — click Upload References`;
-      refStatus.className = 'ref-status pending';
-      previewFiles(refDropzone, refFile, true);
+      refDropzone.classList.add('hidden');
+      renderThumbnails(refFiles, refStrip, true);
     });
 
     setupDropzone(taskDropzone, taskFileInput, (files) => {
-      taskFile = files[0];
-      previewFiles(taskDropzone, [taskFile], false);
+      taskFiles = Array.from(files);
+      taskDropzone.classList.add('hidden');
+      renderThumbnails(taskFiles, taskStrip, false);
     });
+
+    function showToast(message, type = 'info') {
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      
+      let icon = '';
+      if (type === 'success') icon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+      if (type === 'error') icon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>';
+      
+      toast.innerHTML = `<span style="display:flex;align-items:center;">${icon}</span> <div>${message}</div>`;
+      toastContainer.appendChild(toast);
+      
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 300);
+      }, 5000);
+    }
 
     function getSettings() {
       return {
@@ -488,16 +709,6 @@
         templateId: Number(document.getElementById('template-id').value),
         taskId: Number(document.getElementById('task-id').value),
       };
-    }
-
-    function setBusy(busy, message, isError) {
-      statusBar.classList.toggle('visible', busy || isError);
-      statusBar.classList.toggle('info', busy && !isError);
-      statusBar.classList.toggle('error', isError);
-      statusSpinner.style.display = busy && !isError ? 'block' : 'none';
-      statusText.textContent = message || '';
-      document.getElementById('btn-upload-ref').disabled = busy;
-      document.getElementById('btn-compare').disabled = busy;
     }
 
     async function parseResponse(res) {
@@ -509,192 +720,210 @@
     }
 
     async function uploadReference() {
-      if (!refFile || refFile.length === 0) throw new Error('Please select reference images first.');
+      if (refFiles.length === 0) throw new Error('Select reference images first.');
       const { facilityId, templateId } = getSettings();
       const form = new FormData();
       const metadata = [];
       
-      refFile.forEach((f, idx) => {
+      refFiles.forEach((f, idx) => {
         form.append('images', f);
-        metadata.push({ facility_id: facilityId, template_id: templateId, label: 'ui-reference-' + idx });
+        metadata.push({ facility_id: facilityId, template_id: templateId, label: 'ui-ref-' + idx });
       });
       form.append('metadata', JSON.stringify(metadata));
 
       const res = await fetch('/api/admin/upload-references/bulk', { method: 'POST', body: form });
       const data = await parseResponse(res);
       referenceUploaded = true;
-      refStatus.textContent = `${refFile.length} references uploaded (Batch: ${data.batch_id}). Select one below!`;
-      refStatus.className = 'ref-status';
-
-      // Render gallery
-      const gallery = document.getElementById('ref-gallery');
-      gallery.innerHTML = '';
-      data.results.forEach(ref => {
-         const img = document.createElement('img');
-         img.src = ref.image_url;
-         img.style.width = '100%';
-         img.style.height = '80px';
-         img.style.objectFit = 'cover';
-         img.style.borderRadius = '8px';
-         img.style.cursor = 'pointer';
-         img.style.border = '3px solid transparent';
-         img.title = `ID: ${ref.id}`;
-         img.onclick = () => {
-             // deselect all
-             Array.from(gallery.children).forEach(c => c.style.borderColor = 'transparent');
-             // select this
-             img.style.borderColor = 'var(--accent)';
-             referenceId = ref.id;
-             refStatus.textContent = `Selected Reference ID: ${referenceId}`;
-         };
-         gallery.appendChild(img);
-      });
-
-      return data.results;
-    }
-
-    async function uploadTask() {
-      if (!taskFile) throw new Error('Please select a task image first.');
-      if (!referenceId) throw new Error('Please select a reference image from the gallery first.');
+      referencesList = data.results;
+      currentBatchId = data.batch_id;
       
-      const { facilityId, templateId } = getSettings();
-      const form = new FormData();
-      form.append('image', taskFile);
-      form.append('task_id', String(referenceId)); // Use selected reference ID
-      form.append('facility_id', String(facilityId));
-      form.append('template_id', String(templateId));
-      form.append('janitor_id', 'ui-demo');
-
-      const res = await fetch('/api/janitor/upload-completion', { method: 'POST', body: form });
-      const data = await parseResponse(res);
-      return data.results;
+      const shortId = data.batch_id.split('-')[0];
+      document.getElementById('batch-id-display').textContent = 'Batch: ' + shortId;
+      showToast(`${refFiles.length} references uploaded &middot; Batch #${shortId}`, 'success');
+      updateStepper();
     }
 
-    async function pollResult(taskId, maxAttempts = 300) {
+    async function uploadTasksBulk() {
+      if (taskFiles.length === 0) throw new Error('Select task images first.');
+      const { facilityId, templateId, taskId } = getSettings();
+      const form = new FormData();
+      const metadata = [];
+      
+      taskFiles.forEach((f, idx) => {
+        form.append('images', f);
+        metadata.push({
+          task_id: taskId + idx,
+          facility_id: facilityId,
+          template_id: templateId,
+          janitor_id: 'ui-demo-v2'
+        });
+      });
+      form.append('metadata', JSON.stringify(metadata));
+
+      const res = await fetch('/api/janitor/upload-completions/bulk', { method: 'POST', body: form });
+      const data = await parseResponse(res);
+      return data.batch_id;
+    }
+
+    async function pollBatchResult(batchId, maxAttempts = 300) {
       for (let i = 0; i < maxAttempts; i++) {
-        const res = await fetch(`/api/tasks/${taskId}/result`);
-        if (res.status === 404) {
-          await sleep(1500);
-          continue;
-        }
+        const res = await fetch(`/api/janitor/batches/${batchId}/status`);
+        if (res.status === 404) { await sleep(1500); continue; }
+        
         const data = await parseResponse(res);
-        const status = data.results.status;
-        setBusy(true, `Processing… (${status})`);
-        if (status !== 'PENDING' && status !== 'PROCESSING') {
-          return data.results;
+        const batchData = data.results;
+        
+        const summary = batchData.summary;
+        btnCompare.innerHTML = `Scanning... (P:${summary.pass} F:${summary.fail} W:${summary.pending + summary.processing})`;
+        
+        if (summary.pending === 0 && summary.processing === 0) {
+          return batchData.results;
         }
         await sleep(1500);
       }
-      throw new Error('Timed out waiting for verification result. Is the worker running?');
+      throw new Error('Timed out waiting for AI verification.');
     }
 
-    function sleep(ms) {
-      return new Promise((r) => setTimeout(r, ms));
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    function getBadgeProps(status) {
+      if (status === 'PASS') return { class: 'success', text: 'Match &middot; Clean' };
+      if (status === 'FAIL' || status === 'INVALID_TASK') return { class: 'fail', text: 'Fail &middot; Issue Detected' };
+      return { class: 'review', text: 'Needs Review' };
+    }
+    
+    function fmtPct(val) { return val ? val.toFixed(0) + '%' : 'N/A'; }
+
+    function renderResults(results) {
+      document.getElementById('task-panel-header').textContent = 'Verification Results';
+      
+      const thumbs = taskStrip.querySelectorAll('.thumb-card');
+      
+      results.forEach((item, idx) => {
+        if (idx >= thumbs.length) return;
+        const thumb = thumbs[idx];
+        
+        // Clear any existing badges from previous runs
+        thumb.querySelectorAll('.thumb-badge').forEach(el => el.remove());
+        thumb.querySelectorAll('.thumb-score').forEach(el => el.remove());
+        
+        const badge = getBadgeProps(item.status);
+        const score = item.cleanliness_percent != null ? item.cleanliness_percent.toFixed(1) : '-';
+        
+        // Add overlay badge
+        const badgeEl = document.createElement('div');
+        badgeEl.className = 'thumb-badge ' + badge.class;
+        badgeEl.style.position = 'absolute';
+        badgeEl.style.top = '6px';
+        badgeEl.style.right = '6px';
+        badgeEl.style.padding = '2px 6px';
+        badgeEl.style.borderRadius = '4px';
+        badgeEl.style.fontSize = '0.7rem';
+        badgeEl.style.fontWeight = 'bold';
+        badgeEl.style.textTransform = 'uppercase';
+        if (badge.class === 'success') {
+          badgeEl.style.backgroundColor = '#22c55e';
+          badgeEl.style.color = '#fff';
+          badgeEl.textContent = 'PASS';
+        } else if (badge.class === 'fail') {
+          badgeEl.style.backgroundColor = '#ef4444';
+          badgeEl.style.color = '#fff';
+          badgeEl.textContent = 'FAIL';
+        } else {
+          badgeEl.style.backgroundColor = '#f59e0b';
+          badgeEl.style.color = '#fff';
+          badgeEl.textContent = 'MANUAL REVIEW';
+        }
+        
+        // Add score
+        const scoreEl = document.createElement('div');
+        scoreEl.className = 'thumb-score';
+        scoreEl.style.position = 'absolute';
+        scoreEl.style.bottom = '6px';
+        scoreEl.style.right = '6px';
+        scoreEl.style.fontSize = '0.8rem';
+        scoreEl.style.fontWeight = 'bold';
+        scoreEl.textContent = score !== '-' ? score + '%' : score;
+        
+        thumb.style.position = 'relative';
+        thumb.appendChild(badgeEl);
+        thumb.appendChild(scoreEl);
+        
+        // Make the image fit full height and crop correctly
+        const img = thumb.querySelector('img');
+        if(img) {
+          img.style.objectFit = 'cover';
+        }
+      });
+      
+      step3.classList.add('completed');
     }
 
-    function badgeClass(status) {
-      if (status === 'PASS') return 'pass';
-      if (status === 'FAIL' || status === 'INVALID_TASK') return status === 'INVALID_TASK' ? 'invalid' : 'fail';
-      if (status === 'MANUAL_REVIEW') return 'review';
-      return 'pending';
-    }
-
-    function fmtPct(value) {
-      if (value == null || Number.isNaN(value)) return '—';
-      return `${Number(value).toFixed(1)}%`;
-    }
-
-    function showResult(result) {
-      resultSection.classList.add('visible');
-      const status = result.status || 'UNKNOWN';
-      resultBadge.textContent = status;
-      resultBadge.className = `badge ${badgeClass(status)}`;
-
-      const metrics = [];
-      if (result.overall_percent != null) metrics.push({ label: 'Overall', value: fmtPct(result.overall_percent) });
-      if (result.cleanliness_percent != null) metrics.push({ label: 'Cleanliness', value: fmtPct(result.cleanliness_percent) });
-      if (result.scene_match_percent != null) metrics.push({ label: 'Scene match', value: fmtPct(result.scene_match_percent) });
-      if (result.similarity_score != null) metrics.push({ label: 'Similarity', value: (result.similarity_score * 100).toFixed(1) + '%' });
-      if (result.vision?.score != null) metrics.push({ label: 'Vision score', value: fmtPct(result.vision.score) });
-      if (result.vision?.confidence != null) metrics.push({ label: 'Confidence', value: fmtPct(result.vision.confidence) });
-
-      metricsEl.innerHTML = metrics
-        .map((m) => `<div class="metric"><div class="value">${m.value}</div><div class="label">${m.label}</div></div>`)
-        .join('');
-
-      ruleReasonEl.textContent = result.rule_reason || result.error_message || '';
-      const issues = result.vision?.issues || [];
-      if (issues.length) {
-        issuesList.hidden = false;
-        issuesList.innerHTML = issues.map((i) => `<li>${escapeHtml(i)}</li>`).join('');
-      } else {
-        issuesList.hidden = true;
-        issuesList.innerHTML = '';
-      }
-
-      resultJson.textContent = JSON.stringify(result, null, 2);
-    }
-
-    function escapeHtml(str) {
-      const div = document.createElement('div');
-      div.textContent = str;
-      return div.innerHTML;
-    }
-
-    document.getElementById('btn-upload-ref').addEventListener('click', async () => {
+    btnUploadRef.addEventListener('click', async () => {
       try {
-        setBusy(true, 'Uploading reference image…');
+        btnUploadRef.disabled = true;
+        btnUploadRef.textContent = 'Uploading...';
         await uploadReference();
-        setBusy(false);
       } catch (err) {
-        setBusy(false, err.message, true);
+        showToast(err.message, 'error');
+      } finally {
+        btnUploadRef.disabled = false;
+        btnUploadRef.textContent = 'Upload References';
       }
     });
 
-    document.getElementById('btn-compare').addEventListener('click', async () => {
+    btnCompare.addEventListener('click', async () => {
       try {
-        resultSection.classList.remove('visible');
-        if (!refFile || refFile.length === 0) throw new Error('Please select reference images.');
-        if (!taskFile) throw new Error('Please select a task image.');
-
-        if (!referenceUploaded) {
-          setBusy(true, 'Uploading reference images…');
-          await uploadReference();
-          setBusy(false);
-          throw new Error('References uploaded! Please select ONE reference from the gallery below to compare against.');
-        }
+        if (taskFiles.length === 0) throw new Error('Please select task images.');
         
-        if (!referenceId) {
-            throw new Error('Please select ONE reference image from the gallery.');
+        btnCompare.disabled = true;
+        btnUploadRef.disabled = true;
+        mainCard.classList.add('shimmer-active');
+
+        if (!referenceUploaded && refFiles.length > 0) {
+          btnCompare.innerHTML = 'Uploading References...';
+          await uploadReference();
         }
 
-        setBusy(true, 'Uploading task image and queuing verification…');
-        const upload = await uploadTask();
-
-        setBusy(true, 'Waiting for AI verification…');
-        const result = await pollResult(upload.task_id);
-        showResult(result);
-        setBusy(false);
+        btnCompare.innerHTML = 'Uploading Tasks...';
+        const batchId = await uploadTasksBulk();
+        document.getElementById('batch-id-display').textContent = 'Batch: ' + batchId;
+        
+        btnCompare.innerHTML = 'Scanning with AI...';
+        const items = await pollBatchResult(batchId);
+        
+        renderResults(items);
+        showToast('Verification complete!', 'success');
+        
       } catch (err) {
-        setBusy(false, err.message, true);
+        showToast(err.message, 'error');
+      } finally {
+        btnCompare.disabled = false;
+        btnUploadRef.disabled = false;
+        btnCompare.innerHTML = 'Compare & Verify';
+        mainCard.classList.remove('shimmer-active');
       }
     });
 
     document.getElementById('btn-reset').addEventListener('click', () => {
-      refFile = null;
-      taskFile = null;
-      referenceUploaded = false;
-      referenceId = null;
-      refFileInput.value = '';
-      taskFileInput.value = '';
-      refDropzone.classList.remove('has-file');
-      taskDropzone.classList.remove('has-file');
-      refDropzone.innerHTML = '<span class="placeholder">Click or drop reference image</span>';
-      taskDropzone.innerHTML = '<span class="placeholder">Click or drop task image</span>';
-      refStatus.textContent = 'No reference uploaded yet';
-      refStatus.className = 'ref-status pending';
-      resultSection.classList.remove('visible');
-      setBusy(false);
+      refFiles = []; taskFiles = [];
+      referenceUploaded = false; referencesList = [];
+      refDropzone.classList.remove('hidden');
+      taskDropzone.classList.remove('hidden');
+      refStrip.innerHTML = ''; taskStrip.innerHTML = '';
+      resultsContainer.innerHTML = '';
+      resultsContainer.classList.add('hidden');
+      taskStrip.classList.remove('hidden');
+      document.getElementById('task-panel-header').textContent = 'Task images (multiple completion photos)';
+      document.getElementById('batch-id-display').textContent = '';
+      refFileInput.value = ''; taskFileInput.value = '';
+      updateStepper();
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        btnCompare.click();
+      }
     });
   </script>
 </body>

@@ -2,9 +2,7 @@ import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { GoogleGenAI } from '@google/genai';
 
-/**
- * Vision service — pluggable provider for cleanliness verification.
- */
+// Vision service for cleanliness verification
 
 export interface VisionResult {
   passed: boolean;
@@ -114,11 +112,7 @@ const ALLOWED_VISION_MIME = new Set([
   'image/webp',
 ]);
 
-/**
- * Fetch an image URL and return its bytes + (validated) mimetype.
- * Used by the Anthropic provider, which inlines images as base64 so the
- * model can read pictures from non-public hosts (e.g. local storage in dev).
- */
+// Fetch image as base64 for API upload
 async function fetchImageAsBase64(
   imageUrl: string,
   timeoutMs: number
@@ -176,7 +170,7 @@ async function analyzeWithAnthropic(
     throw new Error('ANTHROPIC_API_KEY is not configured');
   }
 
-  // Inline both images — works with local storage that Claude can't reach over HTTP.
+  // Fetch images as base64
   const [reference, uploaded] = await Promise.all([
     fetchImageAsBase64(referenceImageUrl, env.ANTHROPIC_TIMEOUT_MS),
     fetchImageAsBase64(uploadedImageUrl, env.ANTHROPIC_TIMEOUT_MS),
@@ -319,6 +313,11 @@ async function analyzeWithOpenAi(
 ): Promise<VisionResult> {
   if (!env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is not configured');
 
+  const [reference, uploaded] = await Promise.all([
+    fetchImageAsBase64(referenceImageUrl, env.OPENAI_TIMEOUT_MS || 30000),
+    fetchImageAsBase64(uploadedImageUrl, env.OPENAI_TIMEOUT_MS || 30000),
+  ]);
+
   const body = {
     model: env.OPENAI_VISION_MODEL,
     response_format: { type: 'json_object' },
@@ -326,7 +325,14 @@ async function analyzeWithOpenAi(
     max_tokens: 400,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: buildOpenAiUserContent(referenceImageUrl, uploadedImageUrl) },
+      { 
+        role: 'user', 
+        content: [
+          { type: 'text', text: USER_INSTRUCTION },
+          { type: 'image_url', image_url: { url: `data:${reference.mediaType};base64,${reference.base64}`, detail: 'high' } },
+          { type: 'image_url', image_url: { url: `data:${uploaded.mediaType};base64,${uploaded.base64}`, detail: 'high' } },
+        ] 
+      },
     ],
   };
 
@@ -419,7 +425,7 @@ async function analyzeWithGemini(
     throw new Error('GEMINI_API_KEY is not configured');
   }
 
-  // Fetch and inline both images as base64 for the Gemini API
+  // Fetch images as base64
   const [reference, uploaded] = await Promise.all([
     fetchImageAsBase64(referenceImageUrl, env.ANTHROPIC_TIMEOUT_MS),
     fetchImageAsBase64(uploadedImageUrl, env.ANTHROPIC_TIMEOUT_MS),
@@ -433,7 +439,7 @@ async function analyzeWithGemini(
   const maxAttempts = 5;
   const baseDelayMs = 2000;
   
-  // Retry loop for handling temporary rate limits or overloaded servers
+  // Retry loop
   while (attempts < maxAttempts) {
     try {
       const response = await ai.models.generateContent({
@@ -461,7 +467,7 @@ async function analyzeWithGemini(
       });
       
       responseText = response?.text || '';
-      break; // Successfully generated content, exit the retry loop
+      break; // Success
       
     } catch (error: any) {
       attempts++;
@@ -476,7 +482,7 @@ async function analyzeWithGemini(
         throw error;
       }
       
-      // Calculate exponential backoff (e.g. 2s, 4s, 8s...) to gracefully handle load
+      // Exponential backoff
       const delayMs = baseDelayMs * Math.pow(2, attempts - 1);
       logger.warn(
         { attempt: attempts, err: error.message, delayMs }, 
@@ -487,7 +493,7 @@ async function analyzeWithGemini(
     }
   }
 
-  // Parse and normalize the JSON response
+  // Normalize response
   const result: VisionResult = {
     ...normalize(parseStrictJson(responseText)),
     provider: 'gemini',

@@ -3,12 +3,6 @@ import { env } from '../config/env.js';
 
 /**
  * CLIP image embedding service.
- *
- * Loads `@xenova/transformers` once per process; caches the extractor.
- * `Xenova/clip-vit-base-patch32` produces 512-dim image embeddings.
- *
- * On first run it downloads the ONNX model (~150 MB) under
- * `node_modules/@xenova/transformers/.cache`.
  */
 
 export const CLIP_EMBEDDING_DIM = 512;
@@ -73,12 +67,7 @@ async function embedRawImage(image: unknown): Promise<number[]> {
 }
 
 /**
- * Generate an L2-normalized CLIP embedding for an http(s) image URL.
- *
- * Note: do NOT pass `data:` URLs here. In Node, Transformers.js treats any
- * non-http(s)/blob URL as a filesystem path (env.useFS), so a data URL is
- * mistaken for a file path and fails with "Unable to read image from ...".
- * Use `generateImageEmbeddingFromBuffer` for in-memory image bytes instead.
+ * Generate an L2-normalized CLIP embedding for an image URL.
  */
 export async function generateImageEmbeddingFromUrl(imageUrl: string): Promise<number[]> {
   if (!imageUrl) throw new Error('imageUrl is required');
@@ -96,10 +85,7 @@ export async function generateImageEmbeddingFromUrl(imageUrl: string): Promise<n
 }
 
 /**
- * Generate an embedding from a raw image buffer (e.g. Multer `file.buffer`).
- *
- * Decodes the bytes directly via `RawImage.fromBlob` so we never round-trip
- * through a `data:` URL, which Transformers.js cannot read in Node.
+ * Generate an embedding from a raw image buffer.
  */
 export async function generateImageEmbeddingFromBuffer(
   buffer: Buffer,
@@ -119,7 +105,7 @@ export async function generateImageEmbeddingFromBuffer(
   return embedRawImage(image);
 }
 
-/** pgvector textual representation:  `[0.1,0.2,...]` */
+// Format for pgvector
 export function toPgVectorLiteral(vec: number[]): string {
   return `[${vec.join(',')}]`;
 }
