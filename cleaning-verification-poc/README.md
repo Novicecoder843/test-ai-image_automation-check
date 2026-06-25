@@ -1,532 +1,719 @@
 # Cleaning Verification POC
 
-Standalone Node.js / TypeScript proof of concept for an **AI facility-cleaning verification** workflow:
-
-```
-Admin uploads reference image
-        │
-        ▼
- store in GCS / local FS
-        │
-        ▼
- generate CLIP embedding (Xenova/clip-vit-base-patch32)
-        │
-        ▼
- store in PostgreSQL + pgvector
-========================================================
-Janitor uploads completion image
-        │
-        ▼
- store image + insert PENDING row
-        │
-        ▼
- BullMQ job → cleaning worker
-        │
-        ▼
- CLIP embed → cosine vs references
-        │
-        ▼
- GPT-4o Vision (strict JSON verdict)
-        │
-        ▼
- Rule engine → PASS / FAIL / MANUAL_REVIEW
-        │
-        ▼
- result persisted; GET /api/tasks/:id/result
-```
-
-No coupling with the main Woloo repo. All you need is **Docker + Node 18+** to run end-to-end on your machine.
+**Stack:** Node.js · TypeScript · PostgreSQL · Redis · BullMQ · CLIP · GPT-4o / Gemini / Claude
 
 ---
 
-## 1. Folder layout
+## Table of Contents
+
+1. [What This Project Does](#1-what-this-project-does)
+2. [System Architecture](#2-system-architecture)
+3. [Full Verification Pipeline](#3-full-verification-pipeline)
+4. [Project Structure](#4-project-structure)
+5. [Prerequisites](#5-prerequisites)
+6. [Setup & Installation](#6-setup--installation)
+7. [Environment Variables Reference](#7-environment-variables-reference)
+8. [Running the Project](#8-running-the-project)
+9. [Using the Web UI](#9-using-the-web-ui)
+10. [API Reference](#10-api-reference)
+11. [Scoring & Decision Logic](#11-scoring--decision-logic)
+12. [Vision Providers](#12-vision-providers)
+13. [Troubleshooting](#13-troubleshooting)
+
+---
+
+## 1. What This Project Does
+
+This system automatically verifies whether a janitor has cleaned a facility correctly by comparing photos using AI.
+
+### The Core Idea
+
+```
+BEFORE (Reference Photo)          AFTER (Janitor's Photo)
+        +                    vs           +
+ Clean washroom baseline            Janitor's completion snap
+        |                                  |
+        └─────────── AI Comparison ────────┘
+                          |
+              ┌───────────┴───────────┐
+              │                       │
+            PASS                    FAIL
+        (Area is clean)        (Still dirty)
+```
+
+### Key Capabilities
+
+| Feature | Description |
+|---|---|
+| Multi-image upload | Upload multiple reference + task photos in one batch |
+| CLIP Scene Matching | Verifies the photo is of the correct room before spending API credits |
+| Vision LLM Check | GPT-4o / Gemini / Claude inspects the image for cleanliness |
+| Rule Engine | Combines scene score + AI score into a final PASS / FAIL / MANUAL_REVIEW |
+| Async Queue | BullMQ processes all jobs in the background — no request blocking |
+| pgvector | Stores CLIP embeddings in PostgreSQL for fast scene matching |
+
+---
+
+## 2. System Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                          Web Browser                             │
+│                    http://localhost:4000                          │
+│                       batch.html  (UI)                           │
+└────────────────────────┬─────────────────────────────────────────┘
+                         │  HTTP (multipart/form-data)
+                         ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                    Express API  (port 4000)                       │
+│                                                                  │
+│   POST /api/admin/upload-references/bulk  ──► sync embed+save    │
+│   POST /api/janitor/upload-completions/bulk ──► enqueue jobs     │
+│   GET  /api/janitor/batches/:id/status     ──► poll results      │
+│   GET  /api/health                         ──► health check      │
+└────────────┬───────────────────────────────┬─────────────────────┘
+             │                               │
+    PostgreSQL + pgvector             Redis (BullMQ)
+    (embeddings + results)           (job queue)
+             │                               │
+             │                               ▼
+             │                ┌──────────────────────────┐
+             │                │   BullMQ Worker           │
+             │                │   cleaning.worker.ts      │
+             │                │                          │
+             │                │  1. CLIP embedding        │
+             │                │  2. Scene match check     │
+             │                │  3. Vision LLM call       │
+             │                │  4. Rule engine decision  │
+             │                │  5. Save result to DB     │
+             └────────────────┴──────────────────────────┘
+```
+
+### Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Runtime | Node.js >= 18.18  +  TypeScript (tsx) |
+| API | Express 4 |
+| Queue | BullMQ 5 + Redis (ioredis) |
+| DB | PostgreSQL + pgvector extension |
+| ML | CLIP (Xenova/clip-vit-base-patch32) |
+| Vision | OpenAI GPT-4o / Google Gemini 2.5 / Anthropic Claude |
+| Images | sharp (resize, HEIC conversion, quality gate) |
+| Logs | pino + pino-pretty |
+
+---
+
+## 3. Full Verification Pipeline
+
+When a janitor uploads a completion photo, here is exactly what happens step by step:
+
+```
+UPLOAD (janitor submits photo)
+        │
+        ▼
+┌─────────────────────────┐
+│  1. Image Quality Gate  │  ← sharp library checks:
+│     (synchronous)       │    • min dimension (480px)
+│                         │    • min brightness, entropy
+│                         │    • HEIC → JPEG conversion
+└──────────┬──────────────┘
+           │ pass
+           ▼
+┌─────────────────────────┐
+│  2. Save + Enqueue      │  ← saves to disk/GCS, writes PENDING
+│     (API process)       │    record to PostgreSQL, pushes job
+│                         │    to Redis BullMQ queue
+└──────────┬──────────────┘
+           │
+           ▼  (async — BullMQ worker picks up job)
+┌─────────────────────────┐
+│  3. Mark PROCESSING     │  ← status updated in DB
+└──────────┬──────────────┘
+           │
+           ▼
+┌─────────────────────────┐
+│  4. CLIP Embedding      │  ← Xenova/CLIP generates a 512-dim
+│     (local model)       │    vector for the uploaded image
+└──────────┬──────────────┘
+           │
+           ▼
+┌─────────────────────────┐
+│  5. Scene Match Check   │  ← cosine similarity vs all stored
+│     (pgvector)          │    reference embeddings for this
+│                         │    facility + template
+└──────────┬──────────────┘
+           │
+    ┌──────┴──────┐
+    │  similarity │
+    │   < 0.88?   │
+    └──────┬──────┘
+           │ yes                      no
+           ▼                          │
+  INVALID_TASK                        ▼
+  (wrong room,           ┌─────────────────────────┐
+   skip vision)          │  6. Vision LLM Call     │  ← fetches both images as
+                         │     (cloud API)         │    base64, sends to model
+                         └──────────┬──────────────┘
+                                    │
+                                    ▼
+                         ┌─────────────────────────┐
+                         │  7. Rule Engine v2       │  ← combines:
+                         │                         │    scene_match_percent +
+                         │                         │    cleanliness_percent +
+                         │                         │    vision.passed flag
+                         └──────────┬──────────────┘
+                                    │
+                       ┌────────────┼────────────┐
+                       ▼            ▼             ▼
+                     PASS         FAIL      MANUAL_REVIEW
+```
+
+---
+
+## 4. Project Structure
 
 ```
 cleaning-verification-poc/
-├── .env.example
-├── docker-compose.yml         (postgres+pgvector, redis)
-├── package.json
-├── tsconfig.json
-├── db/migrations/001_init.sql
-├── scripts/
-│   ├── test-admin-upload.sh
-│   ├── test-janitor-upload.sh
-│   ├── test-get-result.sh
-│   └── poll-result.sh
+│
+├── public/
+│   └── batch.html                    Web UI (drag-and-drop image uploader)
+│
 ├── src/
-│   ├── index.ts                          (API entrypoint)
-│   ├── app.ts                            (Express app builder)
-│   ├── config/{env,logger}.ts            (zod-validated env + pino)
-│   ├── db/{pool,migrate}.ts              (pg pool + SQL migrate runner)
-│   ├── queue/{redis,cleaning.queue}.ts   (ioredis + BullMQ queue)
-│   ├── storage/index.ts                  (local + GCS adapters)
-│   ├── middlewares/{upload,error-handler}.ts
+│   ├── index.ts                      Entry point (API + optional worker)
+│   ├── app.ts                        Express app factory
+│   │
+│   ├── config/
+│   │   ├── env.ts                    Zod-validated environment variables
+│   │   └── logger.ts                 Pino structured logger
+│   │
+│   ├── routes/
+│   │   └── index.ts                  All API route definitions
+│   │
+│   ├── controllers/
+│   │   └── cleaning.controller.ts    HTTP handlers (parse, validate, respond)
+│   │
 │   ├── services/
-│   │   ├── embedding.service.ts          (CLIP @xenova/transformers)
-│   │   ├── vision.service.ts             (GPT-4o Vision)
-│   │   ├── similarity.service.ts         (cosine)
-│   │   ├── rule-engine.service.ts        (PASS/FAIL/MANUAL_REVIEW)
-│   │   └── cleaning.service.ts           (orchestrator)
+│   │   ├── embedding.service.ts      CLIP embedding (Xenova/transformers)
+│   │   ├── vision.service.ts         Vision LLM (OpenAI / Gemini / Anthropic)
+│   │   ├── rule-engine.service.ts    PASS/FAIL/MANUAL_REVIEW decision logic
+│   │   ├── scene-match.service.ts    Cosine similarity + best-reference picker
+│   │   └── batch.service.ts          Batch ID generation + status aggregation
+│   │
+│   ├── workers/
+│   │   ├── cleaning.worker.ts        BullMQ job processor (main pipeline)
+│   │   └── start.ts                  Standalone worker entry point
+│   │
+│   ├── queue/
+│   │   ├── cleaning.queue.ts         BullMQ queue definition + job dispatcher
+│   │   └── redis.ts                  ioredis connection factory
+│   │
 │   ├── repositories/
-│   │   ├── cleaning-reference.repo.ts
-│   │   └── cleaning-verification.repo.ts
-│   ├── controllers/cleaning.controller.ts
-│   ├── routes/index.ts
-│   └── workers/
-│       ├── cleaning.worker.ts            (BullMQ worker)
-│       └── start.ts                      (standalone worker process)
-├── test-images/                          (drop sample images here, git-ignored)
-└── uploads/                              (local storage driver target, git-ignored)
+│   │   ├── cleaning-reference.repo.ts      DB queries for reference images
+│   │   └── cleaning-verification.repo.ts   DB queries for verification records
+│   │
+│   ├── middlewares/
+│   │   └── upload.ts                 Multer + sharp image preprocessing
+│   │
+│   ├── storage/
+│   │   └── storage.service.ts        Local disk / GCS abstraction
+│   │
+│   └── db/
+│       ├── pool.ts                   PostgreSQL connection pool (pg)
+│       └── migrate.ts                Schema migration script
+│
+├── uploads/                          Local image storage (gitignored)
+├── docker-compose.yml                PostgreSQL + Redis for local dev
+├── .env.example                      All env variables with descriptions
+├── package.json
+└── tsconfig.json
 ```
 
 ---
 
-## 2. Setup
+## 5. Prerequisites
 
-### 2.1 Prerequisites
+| Tool | Version | Purpose |
+|---|---|---|
+| Node.js | >= 18.18 | Runtime |
+| npm | >= 9 | Package manager |
+| Docker Desktop | any recent | PostgreSQL + Redis via docker-compose |
+| Git | any | Clone the repo |
 
-- Node.js **>= 18.18**
-- Docker + Docker Compose (only for the bundled Postgres + Redis)
-- An **OpenAI API key** (only needed for GPT-4o Vision; without it, jobs still run but vision step fails and verifications land in `MANUAL_REVIEW`)
+You will also need at least one Vision AI API key:
 
-### 2.2 Install
+- OpenAI API key (`OPENAI_API_KEY`) — for GPT-4o
+- Google AI API key (`GEMINI_API_KEY`) — for Gemini 2.5 Flash
+- Anthropic API key (`ANTHROPIC_API_KEY`) — for Claude
+
+---
+
+## 6. Setup & Installation
+
+### Step 1 — Clone the Repository
 
 ```bash
-cd cleaning-verification-poc
-cp .env.example .env
-# edit .env → set OPENAI_API_KEY
+git clone https://github.com/Novicecoder843/test-ai-image_automation-check.git
+cd test-ai-image_automation-check/cleaning-verification-poc/cleaning-verification-poc
+```
+
+### Step 2 — Install Dependencies
+
+```bash
 npm install
 ```
 
-### 2.3 Start infra
+Note: On first run, `@xenova/transformers` will download the CLIP model (~150 MB) from HuggingFace. This only happens once and is cached locally.
+
+### Step 3 — Start Infrastructure (PostgreSQL + Redis)
 
 ```bash
-npm run infra:up        # postgres+pgvector + redis via docker
-npm run migrate         # creates pgvector ext + tables
+npm run infra:up
 ```
 
-### 2.4 Run
+This spins up:
+- PostgreSQL on port `5432` (user: `cleaning`, password: `cleaning`, db: `cleaning_poc`)
+- Redis on port `6379`
+
+### Step 4 — Configure Environment
 
 ```bash
-npm run dev             # API + worker (default RUN_WORKER_IN_API=true)
+cp .env.example .env
 ```
 
-You should see:
-
-```
-INFO  postgres connected { db: "cleaning_poc", pgVersion: "16.x" }
-INFO  API listening { port: 4000, storage: "local" }
-INFO  cleaning worker started { queue: "cleaning-verification-queue", concurrency: 2 }
-```
-
-> The first request that needs CLIP triggers a one-time ~150 MB model download
-> under `node_modules/@xenova/transformers/.cache`. Subsequent runs are instant.
-
-### 2.5 (Optional) Run worker as a separate process
-
-If you'd rather scale the worker independently:
-
-```env
-# .env
-RUN_WORKER_IN_API=false
-```
+Open `.env` and fill in at minimum one API key and the matching provider:
 
 ```bash
-# in one terminal
-npm run dev
-# in another
-npm run dev:worker
-```
-
----
-
-## 3. API
-
-All routes are under `/api`.
-
-| Method | Path                                  | Purpose                                         |
-| ------ | ------------------------------------- | ----------------------------------------------- |
-| POST   | `/admin/upload-reference`             | Save reference image + CLIP embedding           |
-| POST   | `/janitor/upload-completion`          | Save completion image + queue AI verification   |
-| GET    | `/upload-requirements`                | Minimum phone photo + AI threshold spec         |
-| GET    | `/tasks/:taskId/result`               | Latest verification result (with `?includeHistory=true` for full history) |
-| GET    | `/health`                             | DB ping                                         |
-| GET    | `/queue-stats`                        | BullMQ counts                                   |
-
-### 3.1 `POST /api/admin/upload-reference`
-
-`multipart/form-data`:
-
-| Field         | Type    | Required | Notes                                            |
-| ------------- | ------- | -------- | ------------------------------------------------ |
-| `image`       | file    | yes      | jpg / jpeg / png / webp / heic / heif (≤ 15 MB)  |
-| `facility_id` | integer | yes      |                                                  |
-| `template_id` | integer | no       | Scope reference to template                      |
-| `label`       | string  | no       | Free-form tag                                    |
-| `uploaded_by` | string  | no       | Free-form admin id                               |
-
-**cURL**
-
-```bash
-curl -X POST http://localhost:4000/api/admin/upload-reference \
-  -F 'image=@test-images/ref-washroom-clean.jpg' \
-  -F 'facility_id=42' \
-  -F 'template_id=168' \
-  -F 'label=male-washroom-after-cleaning'
-```
-
-**Response (201)**
-
-```json
-{
-  "success": true,
-  "results": {
-    "id": 1,
-    "facility_id": 42,
-    "template_id": 168,
-    "image_path": "cleaning/references/f42_1716457800_x9k2qf_ref.jpg",
-    "image_url": "http://localhost:4000/files/cleaning/references/f42_1716457800_x9k2qf_ref.jpg",
-    "image_mime": "image/jpeg",
-    "image_width": 1024,
-    "image_height": 768,
-    "image_bytes": 142318,
-    "label": "male-washroom-after-cleaning",
-    "embedding_dim": 512,
-    "preprocess_ms": 41,
-    "source_bytes": 3287654,
-    "quality": { "width": 1024, "height": 768, "sharpness": 4.2, "brightness": 128.5, "entropy": 6.1, "bytes": 142318 }
-  }
-}
-```
-
-Low-quality photos are rejected with **422** (`LOW_QUALITY_IMAGE`). Wrong-area photos at janitor upload are rejected with **422** (`INVALID_TASK_IMAGE`).
-
-### 3.2 `GET /api/upload-requirements`
-
-Returns minimum phone photo specs, quality gate thresholds, scene-match settings, and AI decision thresholds for mobile clients.
-
-```bash
-curl http://localhost:4000/api/upload-requirements
-```
-
-### 3.3 `POST /api/janitor/upload-completion`
-
-`multipart/form-data`:
-
-| Field         | Type    | Required | Notes                                           |
-| ------------- | ------- | -------- | ----------------------------------------------- |
-| `image`       | file    | yes      | jpg / jpeg / png / webp / heic / heif (≤ 15 MB) |
-| `task_id`     | integer | yes      |                                                 |
-| `facility_id` | integer | yes      |                                                 |
-| `template_id` | integer | **yes** (when `SCENE_MATCH_ENFORCE=true`) | Must match admin reference task type |
-| `janitor_id`  | string  | no       |                                                 |
-
-**cURL**
-
-```bash
-curl -X POST http://localhost:4000/api/janitor/upload-completion \
-  -F 'image=@test-images/completion-good.jpg' \
-  -F 'task_id=9001' \
-  -F 'facility_id=42' \
-  -F 'template_id=168' \
-  -F 'janitor_id=jane.doe'
-```
-
-**Response (202)** — request returns immediately while the worker processes in the background:
-
-```json
-{
-  "success": true,
-  "results": {
-    "verification_id": 7,
-    "task_id": 9001,
-    "status": "PENDING",
-    "image_path": "cleaning/completions/t9001_f42_1716458100_a7d3bm_x.jpg",
-    "image_url": "http://localhost:4000/files/cleaning/completions/t9001_f42_1716458100_a7d3bm_x.jpg",
-    "image_mime": "image/jpeg",
-    "image_width": 1024,
-    "image_height": 768,
-    "image_bytes": 138942,
-    "bull_job_id": "cleaning-verify-1716458100123-7f3a9b21",
-    "queued_at": "2026-06-03T11:15:00.000Z",
-    "preprocess_ms": 37,
-    "source_bytes": 3104872
-  }
-}
-```
-
-### 3.3 `GET /api/tasks/:taskId/result`
-
-**Success — 200 (PASS)**
-
-```json
-{
-  "success": true,
-  "results": {
-    "verification_id": 7,
-    "task_id": 9001,
-    "facility_id": 42,
-    "template_id": 168,
-    "reference_id": 1,
-    "status": "PASS",
-    "image_url": "http://localhost:4000/files/cleaning/completions/...",
-    "similarity_score": 0.9132,
-    "scene_match_percent": 91.3,
-    "cleanliness_percent": 91,
-    "overall_percent": 91.1,
-    "vision": {
-      "passed": true,
-      "score": 91,
-      "confidence": 94,
-      "issues": []
-    },
-    "rule_reason": "similarity 0.913 > pass_threshold 0.85 and vision passed",
-    "error_message": null,
-    "bull_job_id": "cleaning-verify-...",
-    "created_at": "2026-06-03T11:15:00.000Z",
-    "processed_at": "2026-06-03T11:15:08.421Z"
-  }
-}
-```
-
-**INVALID_TASK** (wrong area — e.g. kitchen photo for corridor task)
-
-```json
-{
-  "success": true,
-  "results": {
-    "status": "INVALID_TASK",
-    "scene_match_percent": 62.1,
-    "similarity_score": 0.6210,
-    "rule_reason": "scene match 62.1% < required 88% — wrong task area",
-    "error_message": "Please upload a valid task image for this template"
-  }
-}
-```
-
-**FAIL** (same area, not clean — e.g. floor stain)
-
-```json
-{
-  "success": true,
-  "results": {
-    "status": "FAIL",
-    "scene_match_percent": 91.2,
-    "cleanliness_percent": 42,
-    "overall_percent": 56.8,
-    "similarity_score": 0.9120,
-    "vision": { "passed": false, "score": 42, "confidence": 88, "issues": ["floor stain near toilet"] },
-    "rule_reason": "cleanliness 42% < fail_threshold 50%; scene match 91.2% confirms correct area"
-  }
-}
-```
-
-**FAIL** (low similarity legacy path when scene enforce off)
-
-```json
-{
-  "success": true,
-  "results": {
-    "status": "FAIL",
-    "similarity_score": 0.5821,
-    "vision": {
-      "passed": false,
-      "score": 32,
-      "confidence": 88,
-      "issues": ["trash near sink", "wet floor", "overflowing bin"]
-    },
-    "rule_reason": "similarity 0.582 < fail_threshold 0.65"
-  }
-}
-```
-
-**MANUAL_REVIEW**
-
-```json
-{
-  "success": true,
-  "results": {
-    "status": "MANUAL_REVIEW",
-    "similarity_score": 0.7402,
-    "vision": {
-      "passed": true,
-      "score": 72,
-      "confidence": 60,
-      "issues": ["minor dust on counter"]
-    },
-    "rule_reason": "similarity 0.740 in [0.65, 0.85] or vision verdict not pass (passed=true, confidence=60)"
-  }
-}
-```
-
----
-
-## 4. End-to-end smoke test (3 commands)
-
-```bash
-# 1. Boot infra + app
-npm run infra:up && npm run migrate && npm run dev &
-
-# 2. Upload reference (do once per facility)
-./scripts/test-admin-upload.sh 42 test-images/ref.jpg
-
-# 3. Upload a completion and poll for the verdict
-./scripts/test-janitor-upload.sh 9001 42 test-images/completion.jpg
-./scripts/poll-result.sh 9001
-```
-
----
-
-## 5. Configuration cheatsheet (`.env`)
-
-| Variable                              | Default                            | Notes |
-| ------------------------------------- | ---------------------------------- | ----- |
-| `PORT`                                | `4000`                             |       |
-| `LOG_LEVEL`                           | `info`                             | `debug` for noisier output |
-| `STORAGE_DRIVER`                      | `local`                            | `local` or `gcs` |
-| `PUBLIC_BASE_URL`                     | `http://localhost:4000`            | used to build `/files/...` URLs |
-| `GCS_BUCKET_NAME`                     | —                                  | when `STORAGE_DRIVER=gcs` |
-| `CLIP_MODEL_NAME`                     | `Xenova/clip-vit-base-patch32`     | **no quotes / no inline `#` comments** |
-| `VISION_PROVIDER`                     | `anthropic`                        | `anthropic` (Claude) or `openai` (GPT-4o) |
-| `ANTHROPIC_API_KEY`                   | —                                  | required when `VISION_PROVIDER=anthropic` |
-| `ANTHROPIC_VISION_MODEL`              | `claude-sonnet-4-5`                | any Claude vision model your key allows |
-| `ANTHROPIC_API_URL`                   | `https://api.anthropic.com/v1/messages` | |
-| `ANTHROPIC_VERSION`                   | `2023-06-01`                       | Anthropic-Version header |
-| `ANTHROPIC_TIMEOUT_MS`                | `45000`                            |       |
-| `ANTHROPIC_MAX_TOKENS`                | `600`                              | enough for the JSON verdict |
-| `OPENAI_API_KEY`                      | —                                  | required when `VISION_PROVIDER=openai` |
-| `OPENAI_VISION_MODEL`                 | `gpt-4o`                           |       |
-| `CLEANING_SIMILARITY_PASS_THRESHOLD`  | `0.85`                             | cosine pass cut-off |
-| `CLEANING_SIMILARITY_FAIL_THRESHOLD`  | `0.65`                             | cosine fail cut-off |
-| `RUN_WORKER_IN_API`                   | `true`                             | set `false` to run worker separately |
-| `WORKER_CONCURRENCY`                  | `2`                                | per worker process |
-| `IMG_MAX_DIMENSION`                   | `1024`                             | sharp resize longest-side cap (px)   |
-| `IMG_OUTPUT_FORMAT`                   | `jpeg`                             | `jpeg` or `webp` after preprocessing |
-| `IMG_OUTPUT_QUALITY`                  | `80`                               | encoder quality 1–100                |
-| `IMG_DECODE_PIXEL_LIMIT`              | `50000000`                         | decompression-bomb guard             |
-| `IMG_ALLOW_HEIC`                      | `true`                             | accept iPhone HEIC/HEIF uploads      |
-| `IMG_MAX_UPLOAD_MB`                   | `15`                               | multer fileSize cap (MB)             |
-| `IMG_QUALITY_ENFORCE`                 | `true`                             | reject blurry/dark photos (422)      |
-| `IMG_QUALITY_MIN_DIMENSION`           | `480`                              | min longest side (px) after preprocess |
-| `IMG_QUALITY_MIN_SHARPNESS`           | `2`                                | blur detection threshold             |
-| `SCENE_MATCH_ENFORCE`                 | `true`                             | reject wrong-area task photos        |
-| `SCENE_MATCH_MIN_SIMILARITY`          | `0.88`                             | min cosine for same-area match       |
-| `SCENE_MATCH_STRICT_TEMPLATE`         | `true`                             | exact template_id reference lookup   |
-| `CLEANING_VISION_PASS_SCORE`          | `80`                               | cleanliness % for PASS               |
-| `CLEANING_VISION_FAIL_SCORE`          | `50`                               | cleanliness % for FAIL               |
-| `CLEANING_VISION_REVIEW_SCORE`        | `65`                               | cleanliness % review band            |
-
-> All env values are sanitized — stray surrounding quotes and inline `# comments`
-> are stripped automatically. Don't intentionally rely on that; keep `.env` clean.
-
----
-
-## 5a. Vision provider (Anthropic Claude / OpenAI GPT-4o)
-
-The cleanliness verdict is produced by a vision LLM. Two providers are wired
-in; flip between them with the `VISION_PROVIDER` env var:
-
-| Provider     | When to use                                           | Image transport                                 |
-| ------------ | ----------------------------------------------------- | ----------------------------------------------- |
-| `anthropic`  | **Default.** Works with local storage out of the box. | Image bytes are fetched and inlined as base64.  |
-| `openai`     | When you specifically want GPT-4o (or hit your Claude quota). | Image URLs are sent directly to the API — the URLs must be publicly reachable from OpenAI's network. |
-
-Recommended for development (local file storage isn't reachable from the
-public internet):
-
-```env
-VISION_PROVIDER=anthropic
+# Required: at least one of these
+OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=AI...
 ANTHROPIC_API_KEY=sk-ant-...
-ANTHROPIC_VISION_MODEL=claude-sonnet-4-5
+
+# Set which provider to use
+VISION_PROVIDER=gemini   # or openai, anthropic
 ```
 
-Switching is hot — restart the API/worker and the next job will use the
-new provider. Both providers feed exactly the same prompt and produce the
-same `VisionResult` shape, so the rule engine and DB schema don't change.
-
-The response now also includes `provider` and `model` so you can correlate
-verdicts with the model that produced them when reviewing in the DB.
-
----
-
-## 5b. Image preprocessing (sharp)
-
-Every upload — admin reference **and** janitor completion — runs through the
-same `sharp` pipeline in `src/services/image-preprocess.service.ts` BEFORE
-storage and embedding. This is the single biggest quality lever for the AI
-pipeline:
-
-| Step                        | Why                                                                 |
-| --------------------------- | ------------------------------------------------------------------- |
-| `limitInputPixels`          | Refuse decompression-bomb images (defence against malicious upload) |
-| `.rotate()` (EXIF)          | Phone photos arrive sideways → CLIP/Vision think it's a new scene   |
-| `toColorspace('srgb')`      | Predictable colour for both CLIP and GPT-4o Vision                  |
-| `.resize(maxDim, fit:inside, withoutEnlargement)` | Keep aspect, no upscale of small refs |
-| `.jpeg({ mozjpeg, ... })` or `.webp` | ~15× smaller than raw 12 MP phone photo at quality 80       |
-| Strip EXIF/GPS/ICC          | Privacy + smaller files; CLIP doesn't need it                       |
-
-The same processed bytes are written to storage **and** fed to CLIP, so
-references and completions are always compared apples-to-apples (no drift
-from HEIC vs JPEG, sideways orientation, or wildly different resolutions).
-
-Both upload responses now include `image_mime`, `image_width`, `image_height`,
-`image_bytes`, `preprocess_ms`, and `source_bytes` so you can verify the
-compression ratio on each request.
-
-Tune the pipeline via the `IMG_*` env vars above. Defaults are tuned for
-photographic content at industry-standard 1024 px / quality 80.
-
----
-
-## 6. Inspect the DB
+### Step 5 — Run Database Migrations
 
 ```bash
-docker exec -it cleaning_poc_pg psql -U cleaning -d cleaning_poc
+npm run migrate
+```
 
-# Reference rows
-SELECT id, facility_id, template_id, image_path, image_mime, image_width, image_height, created_at FROM cleaning_references;
+This creates the tables and enables the `pgvector` extension in PostgreSQL.
 
-# Latest verifications
-SELECT id, task_id, status, similarity_score, vision_score, vision_passed, rule_reason
-FROM cleaning_verifications ORDER BY id DESC LIMIT 20;
+### Step 6 — Start the Server
 
-# Try a vector search by hand
-SELECT id, 1 - (embedding <=> (SELECT embedding FROM cleaning_references WHERE id=1)) AS sim
-FROM cleaning_references WHERE facility_id = 42
-ORDER BY embedding <=> (SELECT embedding FROM cleaning_references WHERE id=1)
-LIMIT 5;
+```bash
+npm run dev
+```
+
+The API starts on **http://localhost:4000** and the BullMQ worker starts automatically in the same process (controlled by `RUN_WORKER_IN_API=true` in `.env`).
+
+Open **http://localhost:4000/batch.html** in your browser to access the UI.
+
+---
+
+## 7. Environment Variables Reference
+
+### Server
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `4000` | API server port |
+| `LOG_LEVEL` | `info` | Pino log level: `debug`, `info`, `warn`, `error` |
+| `NODE_ENV` | `development` | Environment label |
+
+### Database
+
+| Variable | Default | Description |
+|---|---|---|
+| `PGHOST` | `localhost` | PostgreSQL host |
+| `PGPORT` | `5432` | PostgreSQL port |
+| `PGUSER` | `cleaning` | PostgreSQL username |
+| `PGPASSWORD` | `cleaning` | PostgreSQL password |
+| `PGDATABASE` | `cleaning_poc` | Database name |
+
+### Redis / Queue
+
+| Variable | Default | Description |
+|---|---|---|
+| `REDIS_HOST` | `localhost` | Redis host |
+| `REDIS_PORT` | `6379` | Redis port |
+| `REDIS_TLS` | `false` | Enable TLS (set `true` in production) |
+
+### AI / Vision
+
+| Variable | Default | Description |
+|---|---|---|
+| `VISION_PROVIDER` | `anthropic` | Active provider: `openai`, `gemini`, or `anthropic` |
+| `OPENAI_API_KEY` | — | OpenAI secret key |
+| `OPENAI_VISION_MODEL` | `gpt-4o` | Model name |
+| `GEMINI_API_KEY` | — | Google AI key |
+| `GEMINI_VISION_MODEL` | `gemini-2.5-flash` | Model name |
+| `ANTHROPIC_API_KEY` | — | Anthropic key |
+| `ANTHROPIC_VISION_MODEL` | `claude-sonnet-4-5` | Model name |
+| `CLIP_MODEL_NAME` | `Xenova/clip-vit-base-patch32` | CLIP model (downloaded from HuggingFace) |
+
+### Scoring Thresholds
+
+| Variable | Default | Description |
+|---|---|---|
+| `SCENE_MATCH_MIN_SIMILARITY` | `0.88` | Cosine similarity below this → INVALID_TASK |
+| `SCENE_MATCH_ENFORCE` | `true` | If false, wrong-room photos still proceed to vision |
+| `CLEANING_VISION_PASS_SCORE` | `80` | Cleanliness score >= 80 → PASS |
+| `CLEANING_VISION_FAIL_SCORE` | `50` | Cleanliness score < 50 → FAIL |
+| `CLEANING_VISION_REVIEW_SCORE` | `65` | Score in 50–80 → MANUAL_REVIEW |
+| `CLEANING_SCENE_WEIGHT` | `0.3` | Weight of scene match in overall % |
+| `CLEANING_CLEANLINESS_WEIGHT` | `0.7` | Weight of cleanliness in overall % |
+
+---
+
+## 8. Running the Project
+
+### Development (all-in-one)
+
+```bash
+npm run dev
+```
+
+Runs both the API server and the BullMQ worker in a single process with hot reload via `tsx watch`.
+
+### Production / Separate Processes
+
+```bash
+# Terminal 1: API only
+npm run start
+
+# Terminal 2: Worker only
+npm run start:worker
+```
+
+Set `RUN_WORKER_IN_API=false` in `.env` when running the worker separately.
+
+### Infrastructure Commands
+
+```bash
+npm run infra:up       # Start Docker containers (PostgreSQL + Redis)
+npm run infra:down     # Stop and remove containers
+npm run infra:logs     # Stream docker-compose logs
+npm run migrate        # Run database schema migrations
+npm run build          # TypeScript type-check (no emit)
 ```
 
 ---
 
-## 7. Production-readiness notes
+## 9. Using the Web UI
 
-This is a POC — but the structure is production-shaped:
+Open **http://localhost:4000/batch.html**
 
-- **Strict env validation** (zod) → no silent typos.
-- **Structured logging** (pino) → swap transport for prod (`NODE_ENV=production`).
-- **Per-stage try/catch** → 4xx vs 5xx with stage tags in error messages.
-- **Idempotent migrations** → safe to re-run.
-- **BullMQ retry + backoff** → vision/embedding failures retry once with 5s exponential backoff.
-- **Graceful shutdown** → both API and worker close pool / queue / redis cleanly.
+The interface follows a 3-step flow:
 
-To harden for prod you would mainly want:
-
-- Auth middleware (currently open)
-- Rate limiting on upload endpoints
-- Image size + dimension limits (already 10 MB cap via multer)
-- Observability (OpenTelemetry, Sentry)
-- Containerized Dockerfile + CI
+```
+[1] Upload References  -->  [2] Upload Tasks  -->  [3] Compare & Verify
+```
 
 ---
 
-## 8. Troubleshooting
+### Step 1 — Upload Reference Images
 
-| Symptom | Likely cause | Fix |
-| ------- | ------------ | --- |
-| `postgres unreachable` on startup | docker compose not running | `npm run infra:up` |
-| `relation "cleaning_references" does not exist` | migration not applied | `npm run migrate` |
-| Verification stays `PENDING` forever | worker not running | check logs for `cleaning worker started`; if absent set `RUN_WORKER_IN_API=true` or run `npm run dev:worker` |
-| Worker errors `OPENAI_API_KEY is not configured` | missing env | set `OPENAI_API_KEY` in `.env`; until then, jobs land in `MANUAL_REVIEW` with `vision_error:` in `vision_issues` |
-| `Unauthorized access to file: "https://huggingface.co/..."` | bad `.env` quoting of `CLIP_MODEL_NAME` | remove surrounding `"`/`'` and any inline `# comment` |
-| `Failed to load image (...)` from CLIP | `PUBLIC_BASE_URL` not reachable from inside the container/worker | for local driver, leave it as `http://localhost:4000` (worker runs in same process); for GCS make sure the bucket is public or use signed URLs |
+Reference images are baseline "what clean looks like" photos for a specific room.
+
+1. Drag and drop, or click the left dropzone to select images
+2. Click **Upload References** below the dropzone
+3. A 5-character Batch ID appears at the bottom (e.g. `8XF2A`)
+
+You only need to upload references once per room. They are stored in the database with CLIP embeddings and reused across all future verifications.
+
+---
+
+### Step 2 — Upload Task Images
+
+Task images are the photos submitted by the janitor after cleaning.
+
+1. Drag and drop, or click the right dropzone to select images
+
+---
+
+### Step 3 — Compare & Verify
+
+1. Click **Compare & Verify**
+2. The system uploads the task photos, enqueues verification jobs, and polls for results automatically
+3. Each thumbnail receives a badge overlay:
+
+| Badge | Colour | Meaning |
+|---|---|---|
+| PASS | Green | Area is clean, meets the standard |
+| FAIL | Red | Area is dirty or has visible issues |
+| MANUAL REVIEW | Amber | Ambiguous — needs a human to check |
+
+---
+
+### Settings Panel
+
+Use the Settings panel at the top to configure:
+
+| Field | Description |
+|---|---|
+| Facility ID | Identifies which facility or building |
+| Template ID | Identifies the room or area type |
+| Task ID | Starting task number (auto-increments per image in the batch) |
+
+---
+
+## 10. API Reference
+
+### Upload Reference Images (bulk)
+
+```
+POST /api/admin/upload-references/bulk
+Content-Type: multipart/form-data
+
+Fields:
+  images[]     one or more image files
+  metadata     JSON array: [{ facility_id, template_id, label }]
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "batch_id": "8XF2A",
+  "results": [
+    { "ok": true, "input_filename": "washroom.jpg", "data": { "id": 13 } }
+  ]
+}
+```
+
+---
+
+### Upload Completion Images (bulk)
+
+```
+POST /api/janitor/upload-completions/bulk
+Content-Type: multipart/form-data
+
+Fields:
+  images[]     one or more image files
+  metadata     JSON array: [{ task_id, facility_id, template_id, janitor_id }]
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "batch_id": "W9KL4",
+  "count": 4,
+  "results": [...]
+}
+```
+
+---
+
+### Poll Batch Status
+
+```
+GET /api/janitor/batches/:batchId/status
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "results": {
+    "summary": {
+      "batch_id": "W9KL4",
+      "total": 4,
+      "pending": 0,
+      "processing": 0,
+      "pass": 2,
+      "fail": 1,
+      "manual_review": 1
+    },
+    "results": [
+      {
+        "verification_id": 161,
+        "task_id": 9001,
+        "status": "PASS",
+        "similarity_score": 0.9999,
+        "cleanliness_percent": 88,
+        "overall_percent": 91.6,
+        "rule_reason": "scene match 100%, cleanliness 88%"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### Get Single Task Result
+
+```
+GET /api/tasks/:taskId/result
+```
+
+---
+
+### Health Check
+
+```
+GET /api/health
+
+Response: { "success": true, "results": { "db": "ok", "timestamp": "..." } }
+```
+
+---
+
+### Queue Stats
+
+```
+GET /api/queue-stats
+
+Response: { "success": true, "results": { "waiting": 0, "active": 2, ... } }
+```
+
+---
+
+## 11. Scoring & Decision Logic
+
+### How Scores Are Calculated
+
+```
+Scene Match % = cosine_similarity(uploaded_embedding, reference_embedding) x 100
+
+Overall %     = (Scene Match % x 0.3) + (Cleanliness % x 0.7)
+```
+
+### Decision Tree
+
+```
+Is scene similarity < 0.88?
+    YES --> INVALID_TASK  (wrong room, skip vision entirely)
+    NO  --> continue
+
+Did Vision LLM respond?
+    NO  --> MANUAL_REVIEW (provider unavailable or timed out)
+    YES --> continue
+
+Is cleanliness score < 50?
+    YES --> FAIL
+
+Is cleanliness score < 65 AND visible defects in issues list?
+    YES --> FAIL
+
+Is cleanliness score >= 80 AND vision.passed = true?
+    YES --> PASS
+
+Otherwise --> MANUAL_REVIEW (gray zone, not clean enough to pass, not dirty enough to fail)
+```
+
+### What the Vision LLM Returns
+
+The LLM is prompted to return a strict JSON object with no additional prose:
+
+```json
+{
+  "passed": true,
+  "score": 87,
+  "confidence": 90,
+  "issues": []
+}
+```
+
+- `passed` — boolean verdict
+- `score` — 0 to 100 cleanliness score (100 = spotless, 0 = filthy)
+- `confidence` — how certain the model is about its verdict
+- `issues` — list of specific problems found (e.g. `"floor stain"`, `"trash visible"`)
+
+---
+
+## 12. Vision Providers
+
+The system supports three Vision LLM providers. Set `VISION_PROVIDER` in `.env` to switch between them.
+
+### Comparison
+
+| Provider | Model | Speed | Notes |
+|---|---|---|---|
+| Gemini | `gemini-2.5-flash` | Fast | Recommended for development — low cost |
+| OpenAI | `gpt-4o` | Medium | High accuracy |
+| Anthropic | `claude-sonnet-4-5` | Medium | Strong reasoning |
+
+### Why Images Are Sent as Base64
+
+All providers receive images as **inline base64 data**, never as URL strings. This is essential because:
+
+Cloud APIs (OpenAI, Gemini, Anthropic) run on external internet servers. They cannot access `http://localhost:4000/...` URLs from your local machine.
+
+The system downloads each image locally and converts it to base64 before sending it to the API.
+
+### Retry Logic
+
+All providers use exponential backoff (2s, 4s, 8s, up to 5 retries) for rate limit errors (HTTP 429/503).
+
+---
+
+## 13. Troubleshooting
+
+### `postgres unreachable — exiting`
+
+```bash
+# Make sure Docker is running, then:
+npm run infra:up
+
+# Verify containers are healthy
+docker ps
+```
+
+---
+
+### Vision always returns MANUAL_REVIEW with score 0
+
+1. Check that your API key is valid and has available credits
+2. Confirm `VISION_PROVIDER` in `.env` matches the key you configured
+3. Check the health endpoint: `GET /api/health`
+4. Review the server logs — pino will show the exact error from the provider
+
+---
+
+### Scene match always returns INVALID_TASK
+
+Your reference images and task images may be from different room types, or the CLIP similarity threshold is too strict.
+
+Options:
+- Lower `SCENE_MATCH_MIN_SIMILARITY` in `.env` (e.g. from `0.88` to `0.75`)
+- Upload new reference images that are a closer visual match to your task photos
+- Set `SCENE_MATCH_ENFORCE=false` to disable the scene check entirely
+
+---
+
+### CLIP model download fails on first run
+
+The CLIP model requires an internet connection on first run to download from HuggingFace. After the initial download, it is cached under `node_modules/@xenova/transformers/.cache` and does not require internet access again.
+
+---
+
+### Key log lines to watch
+
+```bash
+# Server started correctly
+[INFO] postgres connected
+[INFO] API listening  { port: 4000 }
+[INFO] cleaning worker started  { queue: "cleaning-verification", concurrency: 2 }
+[INFO] CLIP model ready
+
+# Job processed successfully
+[INFO] job: complete  { status: "PASS", similarity: 0.99, cleanliness_percent: 87 }
+
+# Errors to investigate
+[ERROR] openai vision failed
+[ERROR] postgres unreachable
+[WARN]  res.arrayBuffer is not a function
+```
+
+---
+
+*Wooloo Tech — AI Cleaning Verification POC*
