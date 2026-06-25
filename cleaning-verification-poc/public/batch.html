@@ -570,7 +570,7 @@
       return data.results;
     }
 
-    async function pollResult(taskId, maxAttempts = 60) {
+    async function pollResult(taskId, maxAttempts = 300) {
       for (let i = 0; i < maxAttempts; i++) {
         const res = await fetch(`/api/tasks/${taskId}/result`);
         if (res.status === 404) {
